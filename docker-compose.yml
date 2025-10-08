@@ -1,0 +1,15 @@
+services:
+  next:
+    build: ./app
+    ports: ["3000:3000"]
+    env_file: .env
+    depends_on: [db, livekit]
+  agent:
+    build: ./agent
+    env_file: .env
+    depends_on: [livekit]
+  db:
+    image: sqlite or postgres
+  livekit:
+    image: livekit/livekit-server
+    ports: ["7880:7880", "7881:7881"]
