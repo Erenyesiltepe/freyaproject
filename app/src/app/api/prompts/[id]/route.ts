@@ -6,7 +6,7 @@ import { logger } from '@/lib/logger';
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await getCurrentUser();
@@ -15,7 +15,8 @@ export async function PUT(
     }
 
     const { title, body, tags = [] } = await request.json();
-    const promptId = params.id; // Use string ID directly
+    const { id } = await params;
+    const promptId = id; // Use string ID directly
 
     const prompt = await prisma.prompt.update({
       where: { 
@@ -43,7 +44,7 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await getCurrentUser();
@@ -51,7 +52,8 @@ export async function DELETE(
       return Response.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const promptId = params.id; // Use string ID directly
+    const { id } = await params;
+    const promptId = id; // Use string ID directly
 
     await prisma.prompt.delete({
       where: { 

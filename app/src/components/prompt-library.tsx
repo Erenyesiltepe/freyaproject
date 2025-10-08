@@ -14,7 +14,11 @@ interface Prompt {
   updatedAt: string;
 }
 
-export function PromptLibrary() {
+interface PromptLibraryProps {
+  onStartSession?: (promptId: string) => void;
+}
+
+export function PromptLibrary({ onStartSession }: PromptLibraryProps) {
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [search, setSearch] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -210,6 +214,15 @@ export function PromptLibrary() {
               <CardTitle className="flex justify-between items-start">
                 <span>{prompt.title}</span>
                 <div className="flex gap-2">
+                  {onStartSession && (
+                    <Button 
+                      variant="default" 
+                      size="sm"
+                      onClick={() => onStartSession(prompt.id)}
+                    >
+                      Start Session
+                    </Button>
+                  )}
                   <Button 
                     variant="outline" 
                     size="sm"

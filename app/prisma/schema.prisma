@@ -11,26 +11,59 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String?  @unique
-  token     String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String    @id @default(cuid())
+  email     String?   @unique
+  token     String    @unique
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   prompts   Prompt[]
+  sessions  Session[]
 
   @@map("users")
 }
 
 model Prompt {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   title     String
   body      String
-  tags      String   // JSON string for tags array
-  version   Int      @default(1)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  tags      String    // JSON string for tags array
+  version   Int       @default(1)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions  Session[]
 
   @@map("prompts")
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  promptId  String
+  userId    String
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  metadata  String?   // JSON string for session metadata
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  
+  prompt    Prompt    @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@map("sessions")
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  sessionId   String
+  role        String   // "user", "assistant", "system"
+  content     String
+  tokens      String?  // JSON string for token info
+  latencyMs   Int?
+  timestamp   DateTime @default(now())
+  
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
 }
