@@ -1,22 +1,25 @@
 {
-  "name": "agent",
+  "name": "agent-service",
   "version": "1.0.0",
-  "main": "index.js",
+  "type": "module",
+  "description": "LiveKit agent for AI assistant",
+  "main": "dist/index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "ts-node --esm src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
+    "dotenv": "^16.6.1",
     "express": "^5.1.0",
-    "pino": "^10.0.0"
+    "livekit-server-sdk": "^2.14.0",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
-    "@types/node": "^24.7.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.18.1",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
   }
 }

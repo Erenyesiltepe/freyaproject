@@ -1,0 +1,26 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+
+redis:
+  address: ""
+
+turn:
+  enabled: false
+
+keys:
+  devkey: secret
+
+# Development configuration
+development: true
+
+# Room configuration
+room:
+  auto_create: true
+  max_participants: 100
+  empty_timeout: 300
+
+# Logging
+log_level: info
