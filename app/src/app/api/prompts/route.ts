@@ -1,8 +1,11 @@
 import { NextRequest } from 'next/server';
+import type { Prompt } from '@prisma/client';
 import { getCurrentUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { tagsToString, tagsFromString } from '@/lib/tags';
 import { logger } from '@/lib/logger';
+
+type PromptWithParsedTags = Omit<Prompt, 'tags'> & { tags: string[] };
 
 export async function GET(request: NextRequest) {
   try {
@@ -39,12 +42,12 @@ export async function GET(request: NextRequest) {
     });
 
     // Filter by tags and convert tags from JSON
-    const filteredPrompts = prompts
-      .map(prompt => ({
+    const filteredPrompts: PromptWithParsedTags[] = prompts
+      .map((prompt): PromptWithParsedTags => ({
         ...prompt,
         tags: tagsFromString(prompt.tags),
       }))
-      .filter(prompt => {
+      .filter((prompt) => {
         if (tags.length === 0) return true;
         return tags.some(tag => prompt.tags.includes(tag));
       });

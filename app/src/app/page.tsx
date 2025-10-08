@@ -6,6 +6,7 @@ import { PromptLibrary } from '@/components/prompt-library';
 import { HealthCheck } from '@/components/health-check';
 import { RecentSessions } from '@/components/recent-sessions';
 import { SessionViewer } from '@/components/session-viewer';
+import { LiveChat } from '@/components/live-chat';
 
 interface User {
   email: string;
@@ -105,10 +106,24 @@ export default function Home() {
           
           <div>
             <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
-              Session Details
+              Live Chat with AI Agent
             </h2>
-            <SessionViewer sessionId={selectedSessionId} />
+            <LiveChat 
+              sessionId={selectedSessionId || undefined}
+              userId={user?.id}
+              username={user?.email || 'Guest'}
+              roomName="agent-console-room"
+            />
           </div>
+          
+          {selectedSessionId && (
+            <div className="lg:col-span-3 mt-6">
+              <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
+                Session Details
+              </h2>
+              <SessionViewer sessionId={selectedSessionId} />
+            </div>
+          )}
         </div>
       </div>
     </div>
