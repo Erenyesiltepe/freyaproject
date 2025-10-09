@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { PromptLibrary } from '@/components/prompt-library';
 import { RecentSessions } from '@/components/recent-sessions';
 import { LiveChat } from '@/components/live-chat';
+import { Metrics } from '@/components/metrics';
 import { useSession } from '@/contexts/SessionContext';
 
 export default function ConsolePage() {
@@ -110,7 +111,7 @@ export default function ConsolePage() {
             </div>
           </div>
             
-            <div>
+          <div>
             <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
               Live Chat with AI Agent
             </h2>
@@ -120,7 +121,17 @@ export default function ConsolePage() {
               username={user?.email || 'Guest'}
               roomName={`console-${selectedSessionId || 'default'}`}
             />
-            </div>
+          </div>
+
+          <div>
+            <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
+              Agent Metrics & Logs
+            </h2>
+            <Metrics 
+              sessionId={selectedSessionId || undefined}
+              refreshInterval={10000}
+            />
+          </div>
         </div>
       </div>
     </div>

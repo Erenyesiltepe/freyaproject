@@ -388,22 +388,26 @@ export function LiveChat({
             if (existingIndex >= 0) {
               // Update existing message with new content
               const updated = [...prev];
+              const tokens = content.split(/\s+/).filter(token => token.length > 0); // Simple tokenization
               updated[existingIndex] = {
                 ...updated[existingIndex],
                 content: content,
                 timestamp: message.timestamp,
                 isStreaming: !isFinal,
+                tokens: tokens,
                 messageType: isTranscription ? 'voice_transcript' : 'text'
               };
               return updated;
             } else {
               // Create new message
+              const tokens = content.split(/\s+/).filter(token => token.length > 0); // Simple tokenization
               return [...prev, {
                 id: messageId,
                 type: isFromAgent ? 'agent' : 'user',
                 content: content,
                 timestamp: message.timestamp,
                 isStreaming: !isFinal,
+                tokens: tokens,
                 messageType: isTranscription ? 'voice_transcript' : 'text'
               }];
             }

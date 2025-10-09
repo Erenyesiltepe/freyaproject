@@ -108,16 +108,38 @@ async def entrypoint(ctx: JobContext):
     # Metrics collection, to measure pipeline performance
     # For more information, see https://docs.livekit.io/agents/build/metrics/
     usage_collector = metrics.UsageCollector()
+    
+    # Track performance metrics
+    response_start_times = {}
+    response_metrics = []
 
     @session.on("metrics_collected")
     def _on_metrics_collected(ev: MetricsCollectedEvent):
         metrics.log_metrics(ev.metrics)
         usage_collector.collect(ev.metrics)
+        
+        # Extract detailed metrics for frontend
+        for metric in ev.metrics:
+            if hasattr(metric, 'first_token_time') and metric.first_token_time:
+                response_metrics.append({
+                    'timestamp': metric.timestamp.isoformat() if hasattr(metric, 'timestamp') else '',
+                    'first_token_latency_ms': metric.first_token_time * 1000,
+                    'total_latency_ms': getattr(metric, 'total_time', 0) * 1000,
+                    'tokens_per_second': getattr(metric, 'tokens_per_second', 0),
+                    'error': getattr(metric, 'error', None) is not None
+                })
+                logger.info(f"Response metrics: first_token={metric.first_token_time*1000:.0f}ms, tokens/sec={getattr(metric, 'tokens_per_second', 0):.1f}")
 
     # Track conversation items for both text and voice interactions
     @session.on("conversation_item_added")
     def _on_conversation_item_added(item):
         """Handle when text input or output is committed to chat history"""
+        logger.info(f"Conversation item added: {item.type} - {getattr(item, 'text', '')[:100]}...")
+        
+        # Track response start time for latency calculation
+        if item.type == "assistant":
+            import time
+            response_start_times[item.id if hasattr(item, 'id') else 'latest'] = time.time()
         logger.info(f"Conversation item added: {item.type} - {getattr(item, 'text', '')[:100]}...")
 
     # Log when participants join/leave for debugging
@@ -191,6 +213,54 @@ async def entrypoint(ctx: JobContext):
                 
         except Exception as e:
             logger.error(f"Error toggling communication mode: {e}")
+            return f"error_{str(e)}"
+
+    @ctx.room.local_participant.register_rpc_method("get_agent_metrics")
+    async def get_agent_metrics(data: rtc.RpcInvocationData) -> str:
+        """Get current agent performance metrics"""
+        try:
+            import json
+            
+            # Calculate metrics from collected data
+            recent_metrics = response_metrics[-10:] if response_metrics else []
+            
+            if recent_metrics:
+                avg_first_token = sum(m['first_token_latency_ms'] for m in recent_metrics) / len(recent_metrics)
+                avg_tokens_per_sec = sum(m['tokens_per_second'] for m in recent_metrics if m['tokens_per_second'] > 0)
+                avg_tokens_per_sec = avg_tokens_per_sec / len([m for m in recent_metrics if m['tokens_per_second'] > 0]) if avg_tokens_per_sec > 0 else 0
+                error_count = sum(1 for m in recent_metrics if m['error'])
+                error_rate = (error_count / len(recent_metrics)) * 100
+            else:
+                avg_first_token = 0
+                avg_tokens_per_sec = 0
+                error_rate = 0
+            
+            metrics_data = {
+                'avg_first_token_latency_ms': round(avg_first_token, 1),
+                'avg_tokens_per_second': round(avg_tokens_per_sec, 2),
+                'error_rate_percent': round(error_rate, 2),
+                'total_responses': len(response_metrics),
+                'recent_responses': len(recent_metrics),
+                'timestamp': __import__('datetime').datetime.now().isoformat()
+            }
+            
+            logger.info(f"Agent metrics requested: {metrics_data}")
+            return json.dumps(metrics_data)
+            
+        except Exception as e:
+            logger.error(f"Error getting agent metrics: {e}")
+            return json.dumps({'error': str(e)})
+
+    @ctx.room.local_participant.register_rpc_method("test_audio_output")
+    async def test_audio_output(data: rtc.RpcInvocationData) -> str:
+        """Test agent audio output"""
+        try:
+            logger.info("Audio test requested")
+            # Send a test audio response
+            await session.output.generate_response("This is an audio test. If you can hear this, the agent audio is working correctly.")
+            return "audio_test_sent"
+        except Exception as e:
+            logger.error(f"Error in audio test: {e}")
             return f"error_{str(e)}"
     
     logger.info("Agent is ready and RPC methods registered")
