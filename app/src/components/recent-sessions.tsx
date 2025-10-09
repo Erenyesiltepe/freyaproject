@@ -44,18 +44,41 @@ export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSes
     }
   };
 
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleString();
+  };
+
+  const formatDuration = (startedAt: string, endedAt?: string) => {
+    const start = new Date(startedAt);
+    const end = endedAt ? new Date(endedAt) : new Date();
+    const durationMs = end.getTime() - start.getTime();
+    const minutes = Math.floor(durationMs / 60000);
+    const seconds = Math.floor((durationMs % 60000) / 1000);
+    return `${minutes}m ${seconds}s`;
+  };
+
+  const isActive = (session: Session) => !session.endedAt;
+
+  const getStatusBadge = (session: Session) => {
+    if (isActive(session)) {
+      return (
+        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+          Active
+        </span>
+      );
+    } else {
+      return (
+        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+          Completed
+        </span>
+      );
+    }
+  };
+
   useEffect(() => {
     loadSessions();
   }, []);
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
 
   const getSessionStatus = (session: Session) => {
     return session.endedAt ? 'Completed' : 'Active';
@@ -85,26 +108,38 @@ export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSes
               key={session.id}
               className={`cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-slate-800 ${
                 selectedSessionId === session.id ? 'ring-2 ring-blue-500' : ''
-              }`}
+              } ${!isActive(session) ? 'opacity-75' : ''}`}
               onClick={() => onSelectSession(session.id)}
             >
               <CardContent className="p-4">
                 <div className="flex justify-between items-start mb-2">
                   <h4 className="font-medium text-sm text-gray-900 dark:text-white truncate flex-1">
                     {session.prompt.title}
+                    {!isActive(session) && (
+                      <span className="text-xs text-gray-500 ml-2">(Read-only)</span>
+                    )}
                   </h4>
-                  <span className={`text-xs px-2 py-1 rounded ml-2 ${
-                    session.endedAt 
-                      ? 'bg-gray-100 text-gray-600 dark:bg-slate-700 dark:text-gray-300'
-                      : 'bg-green-100 text-green-600 dark:bg-green-900 dark:text-green-300'
-                  }`}>
-                    {getSessionStatus(session)}
-                  </span>
+                  {getStatusBadge(session)}
                 </div>
                 
-                <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
-                  <span>{formatDate(session.startedAt)}</span>
-                  <span>{session._count.messages} messages</span>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+                    <span>Started: {formatDate(session.startedAt)}</span>
+                    <span>{session._count.messages} messages</span>
+                  </div>
+                  
+                  {session.endedAt && (
+                    <div className="flex justify-between items-center text-xs text-gray-500 dark:text-gray-400">
+                      <span>Duration: {formatDuration(session.startedAt, session.endedAt)}</span>
+                      <span>Ended: {formatDate(session.endedAt)}</span>
+                    </div>
+                  )}
+                  
+                  {isActive(session) && (
+                    <div className="text-xs text-green-600 dark:text-green-400">
+                      ● Currently active - can send messages
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

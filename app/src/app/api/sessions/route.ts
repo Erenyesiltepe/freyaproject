@@ -54,6 +54,18 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Prompt not found' }, { status: 404 });
     }
 
+    // Mark all previous active sessions as completed (read-only)
+    await prisma.session.updateMany({
+      where: { 
+        userId: user.id,
+        endedAt: null // Sessions that are still active
+      },
+      data: { 
+        endedAt: new Date() // Mark as completed
+      }
+    });
+
+    // Create new session
     const session = await prisma.session.create({
       data: {
         promptId,
@@ -71,5 +83,45 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     logger.error('Failed to create session', { error });
     return Response.json({ error: 'Failed to create session' }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return Response.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
+    const { sessionId, action } = await request.json();
+
+    if (!sessionId || !action) {
+      return Response.json({ error: 'Session ID and action are required' }, { status: 400 });
+    }
+
+    if (action === 'end') {
+      // End a specific session
+      const session = await prisma.session.update({
+        where: { 
+          id: sessionId,
+          userId: user.id // Ensure user owns the session
+        },
+        data: { 
+          endedAt: new Date()
+        },
+        include: {
+          prompt: { select: { title: true } },
+          _count: { select: { messages: true } }
+        }
+      });
+
+      logger.info('Session ended', { sessionId: session.id, userId: user.id });
+      return Response.json({ session });
+    }
+
+    return Response.json({ error: 'Invalid action' }, { status: 400 });
+  } catch (error) {
+    logger.error('Failed to update session', { error });
+    return Response.json({ error: 'Failed to update session' }, { status: 500 });
   }
 }

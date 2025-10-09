@@ -30,10 +30,91 @@ export function LiveChat({
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isJoined, setIsJoined] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState<'active' | 'completed' | 'unknown'>('unknown');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentStreamingMessage = useRef<string | null>(null);
+  const messageStartTime = useRef<number>(0);
 
   const livekit = useLiveKit();
+
+  // Function to check session status
+  const checkSessionStatus = async () => {
+    if (!sessionId) {
+      setSessionStatus('unknown');
+      return;
+    }
+    
+    try {
+      const response = await fetch(`/api/sessions`);
+      if (response.ok) {
+        const data = await response.json();
+        const session = data.sessions.find((s: any) => s.id === sessionId);
+        if (session) {
+          setSessionStatus(session.endedAt ? 'completed' : 'active');
+        } else {
+          setSessionStatus('unknown');
+        }
+      }
+    } catch (error) {
+      console.error('Error checking session status:', error);
+      setSessionStatus('unknown');
+    }
+  };
+
+  // Function to save messages to database
+  const saveMessageToDatabase = async (messageData: {
+    sessionId: string;
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    tokens?: string[];
+    latencyMs?: number;
+  }) => {
+    try {
+      const response = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(messageData),
+      });
+
+      if (!response.ok) {
+        console.error('Failed to save message to database');
+      }
+    } catch (error) {
+      console.error('Error saving message to database:', error);
+    }
+  };
+
+  // Function to load existing messages from database
+  const loadMessagesFromDatabase = async () => {
+    if (!sessionId) return;
+    
+    try {
+      const response = await fetch(`/api/messages?sessionId=${sessionId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const dbMessages: ChatMessage[] = data.messages.map((msg: any) => ({
+          id: msg.id,
+          type: msg.role === 'assistant' ? 'agent' : msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp,
+          isStreaming: false,
+          tokens: msg.tokens ? JSON.parse(msg.tokens) : undefined
+        }));
+        
+        setMessages(prev => [...dbMessages, ...prev]);
+      }
+    } catch (error) {
+      console.error('Error loading messages from database:', error);
+    }
+  };
+
+  // Load messages when component mounts with sessionId
+  useEffect(() => {
+    if (sessionId) {
+      loadMessagesFromDatabase();
+      checkSessionStatus();
+    }
+  }, [sessionId]);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = useCallback(() => {
@@ -53,7 +134,12 @@ export function LiveChat({
         // Handle streaming tokens from agent
         if (message.tokens && message.tokens.length > 0) {
           const messageId = currentStreamingMessage.current || `agent-${Date.now()}`;
-          currentStreamingMessage.current = messageId;
+          
+          // Record start time for latency calculation
+          if (!currentStreamingMessage.current) {
+            messageStartTime.current = Date.now();
+            currentStreamingMessage.current = messageId;
+          }
 
           setMessages(prev => {
             const existingIndex = prev.findIndex(m => m.id === messageId);
@@ -83,14 +169,34 @@ export function LiveChat({
           });
         }
       } else if (message.type === 'stream_complete') {
-        // Mark streaming as complete
+        // Mark streaming as complete and save to database
         if (currentStreamingMessage.current) {
-          setMessages(prev => prev.map(m => 
-            m.id === currentStreamingMessage.current 
-              ? { ...m, isStreaming: false }
-              : m
-          ));
+          const latencyMs = Date.now() - messageStartTime.current;
+          
+          setMessages(prev => {
+            const updated = prev.map(m => 
+              m.id === currentStreamingMessage.current 
+                ? { ...m, isStreaming: false }
+                : m
+            );
+            
+            // Get the completed message to save to database
+            const completedMessage = updated.find(m => m.id === currentStreamingMessage.current);
+            if (completedMessage && sessionId) {
+              saveMessageToDatabase({
+                sessionId,
+                role: 'assistant',
+                content: completedMessage.content,
+                tokens: completedMessage.tokens,
+                latencyMs
+              });
+            }
+            
+            return updated;
+          });
+          
           currentStreamingMessage.current = null;
+          messageStartTime.current = 0;
         }
       } else if (message.type === 'user_message' && message.userId !== userId) {
         // Handle messages from other users
@@ -158,6 +264,17 @@ export function LiveChat({
   const sendMessage = async () => {
     if (!inputValue.trim() || !livekit.isConnected) return;
 
+    // Check if session is read-only
+    if (sessionStatus === 'completed') {
+      setMessages(prev => [...prev, {
+        id: `error-${Date.now()}`,
+        type: 'system',
+        content: 'Cannot send messages to a completed session. This session is read-only.',
+        timestamp: new Date().toISOString()
+      }]);
+      return;
+    }
+
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       type: 'user',
@@ -176,6 +293,15 @@ export function LiveChat({
         sessionId,
         userId
       });
+
+      // Save user message to database if sessionId exists
+      if (sessionId) {
+        await saveMessageToDatabase({
+          sessionId,
+          role: 'user',
+          content: inputValue
+        });
+      }
 
       setInputValue('');
     } catch (error) {
@@ -222,8 +348,22 @@ export function LiveChat({
     <Card className="w-full h-[600px] flex flex-col">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle>Live Chat with AI Agent</CardTitle>
-          <div className="flex items-center gap-2">
+          <CardTitle>
+            Live Chat with AI Agent
+            {sessionStatus === 'completed' && (
+              <span className="text-sm font-normal text-gray-500 ml-2">(Read-only)</span>
+            )}
+          </CardTitle>
+          <div className="flex items-center gap-3">
+            {sessionStatus !== 'unknown' && (
+              <span className={`text-xs px-2 py-1 rounded-full font-medium ${
+                sessionStatus === 'active' 
+                  ? 'bg-green-100 text-green-800' 
+                  : 'bg-gray-100 text-gray-800'
+              }`}>
+                {sessionStatus === 'active' ? 'Active Session' : 'Completed Session'}
+              </span>
+            )}
             <span className={`text-sm ${getStatusColor()}`}>
               {getConnectionStatus()}
             </span>
@@ -302,16 +442,21 @@ export function LiveChat({
             onChange={(e) => setInputValue(e.target.value)}
             onKeyPress={handleKeyPress}
             placeholder={
-              isJoined 
-                ? "Type your message..." 
-                : "Join room to start chatting"
+              sessionStatus === 'completed'
+                ? "Session completed - read-only mode"
+                : isJoined 
+                  ? "Type your message..." 
+                  : "Join room to start chatting"
             }
-            disabled={!isJoined || livekit.isConnecting}
-            className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+            disabled={!isJoined || livekit.isConnecting || sessionStatus === 'completed'}
+            className={`flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 ${
+              sessionStatus === 'completed' ? 'cursor-not-allowed' : ''
+            }`}
           />
           <Button 
             onClick={sendMessage}
-            disabled={!inputValue.trim() || !isJoined || livekit.isConnecting}
+            disabled={!inputValue.trim() || !isJoined || livekit.isConnecting || sessionStatus === 'completed'}
+            title={sessionStatus === 'completed' ? 'Cannot send messages to completed session' : undefined}
           >
             Send
           </Button>

@@ -26,7 +26,7 @@ This repository hosts a small full-stack demo consisting of a Next.js dashboard,
   --config /livekit.yaml 
 
 
-  pnpm prisma db push
+c
 	```
 
 	Exposing the UDP ports (7882 and 50000-50010) allows browsers to complete the WebRTC peer connection. Leave this terminal running while you develop.
