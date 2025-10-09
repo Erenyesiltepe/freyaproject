@@ -37,6 +37,10 @@ export function LiveChat({
   const [isRecording, setIsRecording] = useState(false);
   const [agentPresent, setAgentPresent] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'online'>('disconnected');
+  const [audioDevices, setAudioDevices] = useState<{ microphones: MediaDeviceInfo[]; speakers: MediaDeviceInfo[] }>({ microphones: [], speakers: [] });
+  const [selectedMicrophone, setSelectedMicrophone] = useState<string>('');
+  const [selectedSpeaker, setSelectedSpeaker] = useState<string>('');
+  const [showDeviceSettings, setShowDeviceSettings] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentStreamingMessage = useRef<string | null>(null);
   const messageStartTime = useRef<number>(0);
@@ -48,6 +52,182 @@ export function LiveChat({
   const generateUniqueId = (prefix: string = 'msg') => {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   };
+
+  // Audio device management
+  const enumerateAudioDevices = useCallback(async () => {
+    try {
+      // Request permissions first
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const microphones = devices.filter(device => device.kind === 'audioinput');
+      const speakers = devices.filter(device => device.kind === 'audiooutput');
+      
+      setAudioDevices({ microphones, speakers });
+      
+      // Set default devices if none selected
+      if (!selectedMicrophone && microphones.length > 0) {
+        setSelectedMicrophone(microphones[0].deviceId);
+      }
+      if (!selectedSpeaker && speakers.length > 0) {
+        setSelectedSpeaker(speakers[0].deviceId);
+      }
+      
+      console.log('Available microphones:', microphones);
+      console.log('Available speakers:', speakers);
+    } catch (error) {
+      console.error('Failed to enumerate audio devices:', error);
+    }
+  }, [selectedMicrophone, selectedSpeaker]);
+
+  // Apply audio device settings
+  const applyAudioDeviceSettings = useCallback(async () => {
+    if (!livekit.room) return;
+    
+    try {
+      // Apply speaker setting only (don't mess with microphone here)
+      if (selectedSpeaker && 'setSinkId' in HTMLAudioElement.prototype) {
+        // Get all audio elements in the page
+        const audioElements = document.querySelectorAll('audio');
+        for (const audio of audioElements) {
+          try {
+            await (audio as any).setSinkId(selectedSpeaker);
+            console.log('Applied speaker device to audio element:', selectedSpeaker);
+          } catch (error) {
+            console.warn('Failed to set speaker for audio element:', error);
+          }
+        }
+        
+        // Set up a mutation observer to handle dynamically created audio elements
+        const observer = new MutationObserver((mutations) => {
+          mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                const element = node as Element;
+                const audioElements = element.querySelectorAll ? element.querySelectorAll('audio') : [];
+                
+                // Also check if the node itself is an audio element
+                if (element.tagName === 'AUDIO') {
+                  (element as any).setSinkId?.(selectedSpeaker).catch(console.warn);
+                }
+                
+                // Apply to any audio elements found within
+                audioElements.forEach((audio) => {
+                  (audio as any).setSinkId?.(selectedSpeaker).catch(console.warn);
+                });
+              }
+            });
+          });
+        });
+        
+        observer.observe(document.body, { childList: true, subtree: true });
+        
+        // Store the observer to clean it up later
+        (window as any).__audioObserver = observer;
+        
+        console.log('Speaker device configured:', selectedSpeaker);
+      }
+    } catch (error) {
+      console.error('Failed to apply audio device settings:', error);
+    }
+  }, [livekit.room, selectedSpeaker]);
+
+  // Initialize audio devices on component mount
+  useEffect(() => {
+    enumerateAudioDevices();
+    
+    // Listen for device changes
+    const handleDeviceChange = () => {
+      enumerateAudioDevices();
+    };
+    
+    navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
+    
+    return () => {
+      navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+    };
+  }, [enumerateAudioDevices]);
+
+  // Apply device settings when they change or when connected
+  useEffect(() => {
+    if (livekit.isConnected) {
+      applyAudioDeviceSettings();
+    }
+  }, [livekit.isConnected, selectedSpeaker, applyAudioDeviceSettings]);
+
+  // Test speaker function
+  const testSpeaker = useCallback(async () => {
+    try {
+      // Create a short test tone
+      const audioContext = new AudioContext();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // A4 note
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.5);
+      
+      // Try to set the audio output to selected speaker if supported
+      if (selectedSpeaker && 'setSinkId' in HTMLAudioElement.prototype) {
+        try {
+          const audio = new Audio();
+          await (audio as any).setSinkId(selectedSpeaker);
+          console.log('Test tone will play on selected speaker');
+        } catch (error) {
+          console.warn('Could not set speaker for test tone:', error);
+        }
+      }
+      
+      setTimeout(() => {
+        audioContext.close();
+      }, 1000);
+      
+    } catch (error) {
+      console.error('Failed to test speaker:', error);
+      alert('Speaker test failed. Please check your audio permissions.');
+    }
+  }, [selectedSpeaker]);
+
+  // Test microphone function
+  const testMicrophone = useCallback(async () => {
+    try {
+      const constraints = selectedMicrophone 
+        ? { audio: { deviceId: { exact: selectedMicrophone } } }
+        : { audio: true };
+      
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
+      // Show that microphone is working
+      setMessages(prev => [...prev, {
+        id: generateUniqueId('system'),
+        type: 'system',
+        content: `🎤 Microphone test successful! Device: ${audioDevices.microphones.find(d => d.deviceId === selectedMicrophone)?.label || 'Default'}`,
+        timestamp: new Date().toISOString(),
+        messageType: 'text'
+      }]);
+      
+      // Stop the stream after test
+      stream.getTracks().forEach(track => track.stop());
+      
+    } catch (error) {
+      console.error('Microphone test failed:', error);
+      setMessages(prev => [...prev, {
+        id: generateUniqueId('error'),
+        type: 'system',
+        content: `❌ Microphone test failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date().toISOString(),
+        messageType: 'text'
+      }]);
+    }
+  }, [selectedMicrophone, audioDevices.microphones]);
   
   // Function to save messages to database
   const saveMessageToDatabase = async (messageData: {
@@ -383,9 +563,36 @@ export function LiveChat({
     try {
       setIsRecording(true);
       
-      // Phase 4a: Enable microphone using LiveKit SDK
+      // Phase 4a: Enable microphone using LiveKit SDK with selected device
       if (livekit.room && livekit.isConnected) {
-        await livekit.room.localParticipant.setMicrophoneEnabled(true);
+        // Apply speaker settings first
+        await applyAudioDeviceSettings();
+        
+        // Enable microphone with proper LiveKit method
+        try {
+          // If a specific microphone is selected, we'll handle it differently
+          if (selectedMicrophone) {
+            // First disable current microphone
+            await livekit.room.localParticipant.setMicrophoneEnabled(false);
+            
+            // Create constraints for specific device
+            const audioConstraints: MediaTrackConstraints = {
+              deviceId: { exact: selectedMicrophone }
+            };
+            
+            // Enable with constraints
+            await livekit.room.localParticipant.setMicrophoneEnabled(true, audioConstraints);
+            console.log('Microphone enabled with selected device:', selectedMicrophone);
+          } else {
+            // Use default microphone
+            await livekit.room.localParticipant.setMicrophoneEnabled(true);
+            console.log('Microphone enabled with default device');
+          }
+        } catch (micError) {
+          console.warn('Failed to use selected microphone, trying default:', micError);
+          // Fallback to default microphone
+          await livekit.room.localParticipant.setMicrophoneEnabled(true);
+        }
         
         // Tell the agent to switch to voice mode
         try {
@@ -403,7 +610,7 @@ export function LiveChat({
         setMessages(prev => [...prev, {
           id: generateUniqueId('system'),
           type: 'system',
-          content: '🎤 Voice call started. Speak to communicate.',
+          content: `🎤 Voice call started. Speak to communicate.${selectedMicrophone ? ' Using selected microphone.' : ''}`,
           timestamp: new Date().toISOString(),
           messageType: 'text'
         }]);
@@ -495,34 +702,34 @@ export function LiveChat({
   const getStatusColor = () => {
     switch (connectionStatus) {
       case 'connecting':
-        return 'text-yellow-600';
+        return 'text-yellow-400';
       case 'connected':
-        return agentPresent ? 'text-green-600' : 'text-blue-600';
+        return agentPresent ? 'text-green-400' : 'text-blue-400';
       case 'online':
-        return 'text-green-600';
+        return 'text-green-400';
       case 'disconnected':
       default:
-        if (livekit.error) return 'text-red-600';
-        return 'text-gray-600';
+        if (livekit.error) return 'text-red-400';
+        return 'text-gray-400';
     }
   };
 
   return (
-    <Card className="w-full h-[600px] flex flex-col">
-      <CardHeader className="pb-3">
+    <Card className="w-full h-[600px] flex flex-col bg-gray-900 border-gray-700 text-gray-100">
+      <CardHeader className="pb-3 border-b border-gray-700">
         <div className="flex items-center justify-between">
-          <CardTitle>
+          <CardTitle className="text-gray-100">
             Live Chat with AI Agent
             {sessionStatus === 'completed' && (
-              <span className="text-sm font-normal text-gray-500 ml-2">(Read-only)</span>
+              <span className="text-sm font-normal text-gray-400 ml-2">(Read-only)</span>
             )}
           </CardTitle>
           <div className="flex items-center gap-3">
             {sessionStatus !== 'unknown' && (
               <span className={`text-xs px-2 py-1 rounded-full font-medium ${
                 sessionStatus === 'active' 
-                  ? 'bg-green-100 text-green-800' 
-                  : 'bg-gray-100 text-gray-800'
+                  ? 'bg-green-900 text-green-300 border border-green-700' 
+                  : 'bg-gray-800 text-gray-300 border border-gray-600'
               }`}>
                 {sessionStatus === 'active' ? 'Active Session' : 'Completed Session'}
               </span>
@@ -532,8 +739,8 @@ export function LiveChat({
             {isJoined && (
               <span className={`text-xs px-2 py-1 rounded-full font-medium ${
                 agentPresent 
-                  ? 'bg-blue-100 text-blue-800' 
-                  : 'bg-orange-100 text-orange-800'
+                  ? 'bg-blue-900 text-blue-300 border border-blue-700' 
+                  : 'bg-orange-900 text-orange-300 border border-orange-700'
               }`}>
                 {agentPresent ? '🤖 Agent Ready' : '⏳ Waiting for Agent'}
               </span>
@@ -543,7 +750,7 @@ export function LiveChat({
               {getConnectionStatus()}
             </span>
             {livekit.participants.length > 0 && (
-              <span className="text-sm text-gray-500">
+              <span className="text-sm text-gray-400">
                 ({livekit.participants.length + 1} participants)
               </span>
             )}
@@ -555,6 +762,7 @@ export function LiveChat({
               onClick={joinRoom} 
               disabled={livekit.isConnecting}
               size="sm"
+              className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
             >
               {livekit.isConnecting ? 'Joining...' : 'Join Room'}
             </Button>
@@ -563,16 +771,131 @@ export function LiveChat({
               onClick={leaveRoom} 
               variant="outline"
               size="sm"
+              className="border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-gray-200"
             >
               Leave Room
             </Button>
           )}
+          
+          {/* Audio Device Settings Button */}
+          <Button
+            onClick={() => setShowDeviceSettings(!showDeviceSettings)}
+            variant="outline"
+            size="sm"
+            title="Audio Device Settings"
+            className="border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-gray-200"
+          >
+            🎧 Audio Settings
+          </Button>
         </div>
+
+        {/* Audio Device Settings Panel */}
+        {showDeviceSettings && (
+          <div className="mt-3 p-4 border border-gray-600 rounded-lg bg-gray-800 space-y-4 max-w-full overflow-hidden">
+            <div className="flex items-center justify-between">
+              <h4 className="font-medium text-sm text-gray-200">🎧 Audio Device Settings</h4>
+              <button
+                onClick={() => setShowDeviceSettings(false)}
+                className="text-gray-400 hover:text-gray-200 text-lg leading-none"
+                title="Close settings"
+              >
+                ×
+              </button>
+            </div>
+            
+            <div className="space-y-3">
+              {/* Microphone Selection */}
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-gray-300">
+                  🎤 Microphone
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={selectedMicrophone}
+                    onChange={(e) => setSelectedMicrophone(e.target.value)}
+                    className="flex-1 text-sm p-2 bg-gray-700 border border-gray-600 rounded text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-0"
+                  >
+                    <option value="" className="bg-gray-700">Select Microphone</option>
+                    {audioDevices.microphones.map((device) => (
+                      <option key={device.deviceId} value={device.deviceId} className="bg-gray-700">
+                        {device.label || `Microphone ${device.deviceId.slice(0, 8)}...`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={testMicrophone}
+                    className="px-3 py-2 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 whitespace-nowrap"
+                    title="Test microphone"
+                  >
+                    🎤
+                  </button>
+                </div>
+              </div>
+
+              {/* Speaker Selection */}
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-gray-300">
+                  🔊 Speaker/Headphones
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    value={selectedSpeaker}
+                    onChange={(e) => setSelectedSpeaker(e.target.value)}
+                    className="flex-1 text-sm p-2 bg-gray-700 border border-gray-600 rounded text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent min-w-0"
+                  >
+                    <option value="" className="bg-gray-700">Select Speaker</option>
+                    {audioDevices.speakers.map((device) => (
+                      <option key={device.deviceId} value={device.deviceId} className="bg-gray-700">
+                        {device.label || `Speaker ${device.deviceId.slice(0, 8)}...`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={testSpeaker}
+                    disabled={!selectedSpeaker}
+                    className="px-3 py-2 text-xs bg-green-600 text-white rounded hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-green-500 whitespace-nowrap"
+                    title="Test speaker"
+                  >
+                    🔊
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex flex-wrap gap-2 justify-between items-center pt-2 border-t border-gray-600">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={enumerateAudioDevices}
+                  className="text-xs text-blue-400 hover:text-blue-300 px-2 py-1 rounded hover:bg-gray-700"
+                >
+                  � Refresh
+                </button>
+              </div>
+              
+              <button
+                onClick={() => {
+                  applyAudioDeviceSettings();
+                  setShowDeviceSettings(false);
+                }}
+                className="text-xs bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                Apply & Close
+              </button>
+            </div>
+
+            {/* Device Status */}
+            <div className="text-xs text-gray-400 space-y-1 pt-2 border-t border-gray-600">
+              <div className="truncate">🎤 Mic: {audioDevices.microphones.find(d => d.deviceId === selectedMicrophone)?.label || 'None'}</div>
+              <div className="truncate">🔊 Speaker: {audioDevices.speakers.find(d => d.deviceId === selectedSpeaker)?.label || 'None'}</div>
+            </div>
+          </div>
+        )}
       </CardHeader>
 
-      <CardContent className="flex-1 flex flex-col gap-3 p-4 overflow-hidden">
+      <CardContent className="flex-1 flex flex-col gap-3 p-4 overflow-hidden bg-gray-900">
         {/* Messages - Phase 5: Unified Chat Log with chronological sorting */}
-        <div className="flex-1 overflow-y-auto space-y-3 p-2 border rounded-lg bg-gray-50">
+        <div className="flex-1 overflow-y-auto space-y-3 p-3 border border-gray-700 rounded-lg bg-gray-800">
           {sortedMessages.map((message) => (
             <div
               key={message.id}
@@ -587,22 +910,22 @@ export function LiveChat({
               <div
                 className={`max-w-[80%] p-3 rounded-lg ${
                   message.type === 'user'
-                    ? 'bg-blue-500 text-white'
+                    ? 'bg-blue-600 text-white'
                     : message.type === 'system'
-                    ? 'bg-gray-200 text-gray-700 text-sm'
-                    : 'bg-white border shadow-sm'
+                    ? 'bg-gray-700 text-gray-300 text-sm border border-gray-600'
+                    : 'bg-gray-700 border border-gray-600 text-gray-200 shadow-sm'
                 }`}
               >
                 {/* Participant Identity Label (Phase 3 requirement) */}
                 {message.type !== 'system' && (
-                  <div className="text-xs text-gray-500 mb-1 font-medium">
+                  <div className="text-xs text-gray-400 mb-1 font-medium">
                     {message.type === 'user' ? '👤 User' : '🤖 AI Agent'}
                   </div>
                 )}
                 
                 {/* Phase 4b: Voice Transcript Indicator */}
                 {message.messageType === 'voice_transcript' && (
-                  <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                  <div className="text-xs text-gray-400 mb-1 flex items-center gap-1">
                     <span>🎤</span>
                     <span>Voice Transcript</span>
                   </div>
@@ -610,7 +933,7 @@ export function LiveChat({
                 
                 {/* Phase 5: Message Type Indicators */}
                 {message.messageType === 'text' && message.type !== 'system' && (
-                  <div className="text-xs text-gray-500 mb-1 flex items-center gap-1">
+                  <div className="text-xs text-gray-400 mb-1 flex items-center gap-1">
                     <span>💬</span>
                     <span>Text Message</span>
                   </div>
@@ -644,9 +967,9 @@ export function LiveChat({
             className={`px-3 ${
               communicationMode === 'voice' 
                 ? isRecording 
-                  ? 'bg-red-500 hover:bg-red-600 text-white animate-pulse' 
-                  : 'bg-blue-500 hover:bg-blue-600 text-white'
-                : 'border-gray-300'
+                  ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse border-red-600' 
+                  : 'bg-blue-600 hover:bg-blue-700 text-white border-blue-600'
+                : 'border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-gray-200'
             }`}
             title={
               communicationMode === 'voice' 
@@ -681,7 +1004,7 @@ export function LiveChat({
                       : "Join room to start chatting"
                 }
                 disabled={!isJoined || livekit.isConnecting || sessionStatus === 'completed'}
-                className={`flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 ${
+                className={`flex-1 p-2 bg-gray-800 border border-gray-600 rounded-lg text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-700 disabled:text-gray-500 ${
                   sessionStatus === 'completed' ? 'cursor-not-allowed' : ''
                 }`}
               />
@@ -689,19 +1012,20 @@ export function LiveChat({
                 onClick={sendMessage}
                 disabled={!inputValue.trim() || !isJoined || livekit.isConnecting || sessionStatus === 'completed'}
                 title={sessionStatus === 'completed' ? 'Cannot send messages to completed session' : undefined}
+                className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
               >
                 Send
               </Button>
             </>
           ) : (
             /* Final Polish: Voice mode UI - hide text input, show voice status */
-            <div className="flex-1 p-3 border rounded-lg bg-blue-50 border-blue-200 flex items-center justify-center">
-              <div className="text-center text-blue-700">
+            <div className="flex-1 p-3 border border-blue-600 rounded-lg bg-blue-900/30 border-blue-600/50 flex items-center justify-center">
+              <div className="text-center text-blue-300">
                 <div className="flex items-center justify-center gap-2 mb-1">
                   <span className="text-2xl">🎤</span>
                   <span className="font-medium">Voice Call Active</span>
                 </div>
-                <div className="text-sm text-blue-600">
+                <div className="text-sm text-blue-400">
                   {isRecording ? 'Speak to communicate with the AI agent' : 'Preparing voice connection...'}
                 </div>
                 <div className="text-xs text-blue-500 mt-1">
