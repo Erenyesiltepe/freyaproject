@@ -208,7 +208,7 @@ export function PromptLibrary({ onStartSession }: PromptLibraryProps) {
       )}
 
       <div className="space-y-4">
-        <div className="max-h-[450px] overflow-y-auto pr-2">
+        <div className="max-h-[200px] overflow-y-auto pr-2">
           {prompts.map(prompt => (
             <Card key={prompt.id}>
               <CardHeader>

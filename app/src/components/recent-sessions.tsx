@@ -82,7 +82,7 @@ export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSes
       ) : (
         // Make the sessions list scrollable while keeping the header controls visible
         <div className="space-y-2">
-          <div className="max-h-[550px] overflow-y-auto pr-2">
+          <div className="max-h-[200px] overflow-y-auto pr-2">
             {sessions.slice(0, 10).map(session => (
             <Card 
               key={session.id}

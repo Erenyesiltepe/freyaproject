@@ -71,30 +71,29 @@ function HomeContent() {
         </div>
         
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div>
-            <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
-              Prompt Library
-            </h2>
-            <PromptLibrary onStartSession={handleStartSession} />
-          </div>
-          
-          <div>
-            <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
-              Recent Sessions
-            </h2>
-            <RecentSessions 
-              onSelectSession={selectSession} 
-              selectedSessionId={selectedSessionId || undefined} 
-            />
+            <div className="flex flex-col">
+              <div>
+                <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
+                  Prompt Library
+                </h2>
+                <PromptLibrary onStartSession={handleStartSession} />
+              </div>
+                
+                <div>
+                  <RecentSessions 
+                    onSelectSession={selectSession} 
+                    selectedSessionId={selectedSessionId || undefined} 
+                  />
+                  
+                  {/* <div className="mt-6">
+                    <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
+                      System Health
+                    </h2>
+                    <HealthCheck />
+                  </div> */}
+                </div>
+            </div>
             
-            {/* <div className="mt-6">
-              <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
-                System Health
-              </h2>
-              <HealthCheck />
-            </div> */}
-          </div>
-          
           <div>
             <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
               Live Chat with AI Agent
@@ -107,14 +106,14 @@ function HomeContent() {
             />
           </div>
           
-          {selectedSessionId && (
+          {/* {selectedSessionId && (
             <div className="lg:col-span-3 mt-6">
               <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
                 Session Details
               </h2>
               <SessionViewer sessionId={selectedSessionId} />
             </div>
-          )}
+          )} */}
         </div>
       </div>
     </div>
