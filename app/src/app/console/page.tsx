@@ -6,19 +6,24 @@ import { PromptLibrary } from '@/components/prompt-library';
 import { RecentSessions } from '@/components/recent-sessions';
 import { LiveChat } from '@/components/live-chat';
 import { Metrics } from '@/components/metrics';
-import { useSession } from '@/contexts/SessionContext';
+import { useAuth, useLogout, useCreateSession } from '@/lib/queries';
 
 export default function ConsolePage() {
-  const [user, setUser] = useState<{id: string; email: string} | null>(null);
-  const [loading, setLoading] = useState(true);
   const router = useRouter();
-  const { selectedSessionId, selectSession, createSession } = useSession();
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  
+  // Use TanStack Query hooks
+  const { data: authData, isLoading: authLoading, error: authError } = useAuth();
+  const logoutMutation = useLogout();
+  const createSessionMutation = useCreateSession();
+  
+  const user = authData?.user;
 
   const handleStartSession = async (promptId: string) => {
     try {
-      const newSession = await createSession(promptId);
-      if (newSession) {
-        selectSession(newSession.id);
+      const result = await createSessionMutation.mutateAsync(promptId);
+      if (result?.session) {
+        setSelectedSessionId(result.session.id);
       } else {
         console.error('Failed to start session');
       }
@@ -27,46 +32,23 @@ export default function ConsolePage() {
     }
   };
 
-  const checkAuth = async () => {
-    try {
-      const response = await fetch('/api/auth/me');
-      if (response.ok) {
-        const data = await response.json();
-        setUser(data.user);
-      } else {
-        // Redirect to login if not authenticated
-        router.push('/login');
-      }
-    } catch (error) {
-      console.error('Auth check failed:', error);
-      router.push('/login');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleLogout = async () => {
     try {
-      const response = await fetch('/api/auth/logout', {
-        method: 'POST',
-      });
-      
-      if (response.ok) {
-        router.push('/login');
-        router.refresh();
-      } else {
-        console.error('Logout failed');
-      }
+      await logoutMutation.mutateAsync();
+      router.push('/login');
+      router.refresh();
     } catch (error) {
       console.error('Logout error:', error);
     }
   };
 
-  useEffect(() => {
-    checkAuth();
-  }, []);
+  // Handle authentication errors
+  if (authError) {
+    router.push('/login');
+    return null;
+  }
 
-  if (loading) {
+  if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div>Loading...</div>
@@ -105,7 +87,7 @@ export default function ConsolePage() {
               
             <div>
               <RecentSessions 
-                onSelectSession={selectSession} 
+                onSelectSession={setSelectedSessionId} 
                 selectedSessionId={selectedSessionId || undefined} 
               />
             </div>

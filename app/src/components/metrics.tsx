@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { useMetrics } from '@/lib/queries';
 
 interface MetricsData {
   avgFirstTokenLatency: number;
@@ -28,43 +29,15 @@ interface MetricsProps {
 }
 
 export function Metrics({ sessionId, refreshInterval = 10000 }: MetricsProps) {
-  const [metrics, setMetrics] = useState<MetricsData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-
-  const fetchMetrics = async () => {
-    try {
-      setError(null);
-      const response = await fetch('/api/metrics?hours=24');
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch metrics: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setMetrics(data.metrics);
-        setLastUpdated(new Date());
-      } else {
-        throw new Error(data.error || 'Failed to fetch metrics');
-      }
-    } catch (err) {
-      console.error('Error fetching metrics:', err);
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchMetrics();
-    
-    const interval = setInterval(fetchMetrics, refreshInterval);
-    
-    return () => clearInterval(interval);
-  }, [refreshInterval, sessionId]);
+  // Use TanStack Query for metrics data with auto-refresh
+  const { 
+    data: metricsResponse, 
+    isLoading: loading, 
+    error,
+    refetch
+  } = useMetrics(24);
+  
+  const metrics = metricsResponse?.metrics as MetricsData | undefined;
 
   const formatTimestamp = (timestamp: string) => {
     return new Date(timestamp).toLocaleTimeString();
@@ -125,9 +98,9 @@ export function Metrics({ sessionId, refreshInterval = 10000 }: MetricsProps) {
         <CardContent>
           <div className="text-red-400 p-4 bg-red-900/20 rounded-lg">
             <div className="font-semibold">Error loading metrics</div>
-            <div className="text-sm mt-1">{error}</div>
+            <div className="text-sm mt-1">{error?.message || 'Unknown error'}</div>
             <button 
-              onClick={fetchMetrics}
+              onClick={() => refetch()}
               className="mt-2 px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-sm transition-colors"
             >
               Retry
@@ -146,7 +119,7 @@ export function Metrics({ sessionId, refreshInterval = 10000 }: MetricsProps) {
           <CardTitle className="text-white flex items-center justify-between">
             <span>Performance Metrics</span>
             <span className="text-xs text-gray-400">
-              Last 24h {lastUpdated && `• Updated ${formatTimestamp(lastUpdated.toISOString())}`}
+              Last 24h • Auto-refresh enabled
             </span>
           </CardTitle>
         </CardHeader>

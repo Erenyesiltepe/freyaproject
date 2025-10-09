@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { usePrompts, useCreatePrompt } from '@/lib/queries';
 
 interface Prompt {
   id: string; // Changed from number to string
@@ -19,60 +20,39 @@ interface PromptLibraryProps {
 }
 
 export function PromptLibrary({ onStartSession }: PromptLibraryProps) {
-  const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [search, setSearch] = useState('');
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [editingPrompt, setEditingPrompt] = useState<Prompt | null>(null);
   const [newPrompt, setNewPrompt] = useState({ title: '', body: '', tags: '' });
 
-  const loadPrompts = async () => {
-    const params = new URLSearchParams();
-    if (search) params.set('search', search);
-    if (selectedTags.length > 0) params.set('tags', selectedTags.join(','));
-
-    console.log('Loading prompts with params:', params.toString());
-
-    try {
-      const response = await fetch(`/api/prompts?${params}`);
-      if (response.ok) {
-        const data = await response.json();
-        console.log('Loaded prompts:', data.prompts.length);
-        setPrompts(data.prompts);
-      } else {
-        console.error('Failed to load prompts:', response.status);
-      }
-    } catch (error) {
-      console.error('Error loading prompts:', error);
-    }
-  };
-
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      loadPrompts();
-    }, 300); // Debounce search by 300ms
-
-    return () => clearTimeout(timeoutId);
-  }, [search, selectedTags]);
+  // Use TanStack Query for prompts data
+  const { 
+    data: promptsData, 
+    isLoading, 
+    error,
+    refetch 
+  } = usePrompts();
+  
+  const createPromptMutation = useCreatePrompt();
+  
+  const prompts = promptsData?.prompts || [];
 
   const handleCreatePrompt = async (e: React.FormEvent) => {
     e.preventDefault();
     const tags = newPrompt.tags.split(',').map(tag => tag.trim()).filter(Boolean);
     
-    const response = await fetch('/api/prompts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    try {
+      await createPromptMutation.mutateAsync({
         title: newPrompt.title,
         body: newPrompt.body,
         tags,
-      }),
-    });
-
-    if (response.ok) {
+      });
+      
       setNewPrompt({ title: '', body: '', tags: '' });
       setIsCreating(false);
-      loadPrompts();
+    } catch (error) {
+      console.error('Failed to create prompt:', error);
     }
   };
 
@@ -95,14 +75,14 @@ export function PromptLibrary({ onStartSession }: PromptLibraryProps) {
     if (response.ok) {
       setEditingPrompt(null);
       setNewPrompt({ title: '', body: '', tags: '' });
-      loadPrompts();
+      refetch();
     }
   };
 
   const handleDeletePrompt = async (id: string) => {
     const response = await fetch(`/api/prompts/${id}`, { method: 'DELETE' });
     if (response.ok) {
-      loadPrompts();
+      refetch();
     }
   };
 
@@ -116,7 +96,17 @@ export function PromptLibrary({ onStartSession }: PromptLibraryProps) {
     setIsCreating(true);
   };
 
-  const allTags = [...new Set(prompts.flatMap(p => p.tags))];
+  const allTags = Array.from(new Set(prompts.flatMap((p: any) => (p.tags || []) as string[]))) as string[];
+  const filteredPrompts = prompts.filter((prompt: any) => {
+    const matchesSearch = !search || 
+      prompt.title.toLowerCase().includes(search.toLowerCase()) ||
+      prompt.body.toLowerCase().includes(search.toLowerCase());
+    
+    const matchesTags = selectedTags.length === 0 || 
+      selectedTags.some((tag: string) => prompt.tags.includes(tag));
+    
+    return matchesSearch && matchesTags;
+  });
 
   return (
     <div className="w-full max-w-2xl p-4">
@@ -130,13 +120,13 @@ export function PromptLibrary({ onStartSession }: PromptLibraryProps) {
         />
         
         <div className="flex flex-wrap gap-2">
-          {allTags.map(tag => (
+          {allTags.map((tag: string) => (
             <button
               key={tag}
               onClick={() => {
                 setSelectedTags(prev => 
                   prev.includes(tag) 
-                    ? prev.filter(t => t !== tag)
+                    ? prev.filter((t: string) => t !== tag)
                     : [...prev, tag]
                 );
               }}
@@ -209,7 +199,7 @@ export function PromptLibrary({ onStartSession }: PromptLibraryProps) {
 
       <div className="space-y-4">
         <div className="max-h-[200px] overflow-y-auto pr-2">
-          {prompts.map(prompt => (
+          {filteredPrompts.map((prompt: any) => (
             <Card key={prompt.id}>
               <CardHeader>
                 <CardTitle className="flex justify-between items-start">
@@ -244,7 +234,7 @@ export function PromptLibrary({ onStartSession }: PromptLibraryProps) {
               <CardContent>
                 <p className="text-gray-600 dark:text-gray-300 mb-2">{prompt.body}</p>
                 <div className="flex flex-wrap gap-1 mb-2">
-                  {prompt.tags.map(tag => (
+                  {(prompt.tags as string[]).map((tag: string) => (
                     <span 
                       key={tag}
                       className="px-2 py-1 bg-gray-200 dark:bg-slate-700 text-xs rounded"

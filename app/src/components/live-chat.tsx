@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { useLiveKit, LiveKitMessage } from '../lib/livekit';
-import { useSession } from '@/contexts/SessionContext';
+import { useSessions, isSessionActive } from '@/lib/queries';
 
 interface LiveChatProps {
   sessionId?: string;
@@ -46,7 +46,10 @@ export function LiveChat({
   const messageStartTime = useRef<number>(0);
 
   const livekit = useLiveKit();
-  const { refreshSessions, isSessionActive } = useSession();
+  
+  // Use TanStack Query for session data
+  const { data: sessionsData, refetch: refreshSessions } = useSessions();
+  const sessions = sessionsData?.sessions || [];
 
   // Generate unique IDs to prevent React key conflicts
   const generateUniqueId = (prefix: string = 'msg') => {
@@ -342,7 +345,7 @@ export function LiveChat({
     if (sessionId) {
       loadMessagesFromDatabase();
       // Update session status from context
-      setSessionStatus(isSessionActive(sessionId) ? 'active' : 'completed');
+      setSessionStatus(sessionId && isSessionActive(sessionId, sessions) ? 'active' : 'completed');
     }
   }, [sessionId, isSessionActive]);
 
@@ -820,9 +823,10 @@ export function LiveChat({
           {!isJoined ? (
             <Button 
               onClick={joinRoom} 
-              disabled={livekit.isConnecting}
+              disabled={livekit.isConnecting || sessionStatus === 'completed'}
               size="sm"
-              className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
+              className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed"
+              title={sessionStatus === 'completed' ? 'Cannot join room for completed session' : undefined}
             >
               {livekit.isConnecting ? 'Joining...' : 'Join Room'}
             </Button>

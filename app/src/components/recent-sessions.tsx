@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { useSession } from '@/contexts/SessionContext';
+import { useSessions, isSessionActive } from '@/lib/queries';
 
 interface RecentSessionsProps {
   onSelectSession: (sessionId: string) => void;
@@ -10,14 +10,15 @@ interface RecentSessionsProps {
 }
 
 export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSessionsProps) {
+  // Use TanStack Query for sessions data
   const { 
-    sessions, 
-    loading, 
-    error, 
-    refreshSessions, 
-    selectSession,
-    isSessionActive 
-  } = useSession();
+    data: sessionsData, 
+    isLoading: loading, 
+    error,
+    refetch: refreshSessions 
+  } = useSessions();
+  
+  const sessions = sessionsData?.sessions || [];
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -34,12 +35,11 @@ export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSes
   };
 
   const handleSelectSession = (sessionId: string) => {
-    selectSession(sessionId);
     onSelectSession(sessionId);
   };
 
   const getStatusBadge = (session: any) => {
-    if (isSessionActive(session.id)) {
+    if (isSessionActive(session.id, sessions)) {
       return (
         <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
           Active
@@ -60,7 +60,7 @@ export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSes
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
           Recent Sessions
         </h3>
-        <Button variant="outline" size="sm" onClick={refreshSessions} disabled={loading}>
+        <Button variant="outline" size="sm" onClick={() => refreshSessions()} disabled={loading}>
           {loading ? 'Loading...' : 'Refresh'}
         </Button>
       </div>
@@ -68,7 +68,7 @@ export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSes
       {error && (
         <Card className="mb-4">
           <CardContent className="p-4 text-center text-red-600">
-            Error: {error}
+            Error: {error.message || 'Unknown error'}
           </CardContent>
         </Card>
       )}
@@ -83,19 +83,19 @@ export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSes
         // Make the sessions list scrollable while keeping the header controls visible
         <div className="space-y-2">
           <div className="max-h-[200px] overflow-y-auto pr-2">
-            {sessions.slice(0, 10).map(session => (
+            {sessions.slice(0, 10).map((session: any) => (
             <Card 
               key={session.id}
               className={`cursor-pointer transition-colors hover:bg-gray-50 dark:hover:bg-slate-800 ${
                 selectedSessionId === session.id ? 'ring-2 ring-blue-500' : ''
-              } ${!isSessionActive(session.id) ? 'opacity-75' : ''}`}
+              } ${!isSessionActive(session.id, sessions) ? 'opacity-75' : ''}`}
               onClick={() => handleSelectSession(session.id)}
             >
               <CardContent className="p-4">
                 <div className="flex justify-between items-start mb-2">
                   <h4 className="font-medium text-sm text-gray-900 dark:text-white truncate flex-1">
                     {session.prompt.title}
-                    {!isSessionActive(session.id) && (
+                    {!isSessionActive(session.id, sessions) && (
                       <span className="text-xs text-gray-500 ml-2">(Read-only)</span>
                     )}
                   </h4>
@@ -115,7 +115,7 @@ export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSes
                     </div>
                   )}
                   
-                  {isSessionActive(session.id) && (
+                  {isSessionActive(session.id, sessions) && (
                     <div className="text-xs text-green-600 dark:text-green-400">
                       ● Currently active - can send messages
                     </div>
