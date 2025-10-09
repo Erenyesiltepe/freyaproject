@@ -73,7 +73,8 @@ export async function POST(request: NextRequest) {
         metadata: JSON.stringify(metadata),
       },
       include: {
-        prompt: { select: { title: true, body: true } }
+        prompt: { select: { title: true, body: true } },
+        _count: { select: { messages: true } }
       }
     });
 

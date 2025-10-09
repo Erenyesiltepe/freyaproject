@@ -7,28 +7,22 @@ import { HealthCheck } from '@/components/health-check';
 import { RecentSessions } from '@/components/recent-sessions';
 import { SessionViewer } from '@/components/session-viewer';
 import { LiveChat } from '@/components/live-chat';
+import { SessionProvider, useSession } from '@/contexts/SessionContext';
 
 interface User {
   email: string;
 }
 
-export default function Home() {
+function HomeContent() {
   const [user, setUser] = useState<{id: string; email: string} | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const { selectedSessionId, selectSession, createSession } = useSession();
 
   const handleStartSession = async (promptId: string) => {
     try {
-      const response = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ promptId }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setSelectedSessionId(data.session.id);
-        // You could also redirect to a dedicated session page here
+      const newSession = await createSession(promptId);
+      if (newSession) {
+        selectSession(newSession.id);
       } else {
         console.error('Failed to start session');
       }
@@ -92,7 +86,7 @@ export default function Home() {
               Recent Sessions
             </h2>
             <RecentSessions 
-              onSelectSession={setSelectedSessionId} 
+              onSelectSession={selectSession} 
               selectedSessionId={selectedSessionId || undefined} 
             />
             
@@ -127,5 +121,13 @@ export default function Home() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function Home() {
+  return (
+    <SessionProvider>
+      <HomeContent />
+    </SessionProvider>
   );
 }

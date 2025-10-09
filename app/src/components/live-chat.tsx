@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { useLiveKit, LiveKitMessage } from '../lib/livekit';
+import { useSession } from '@/contexts/SessionContext';
 
 interface LiveChatProps {
   sessionId?: string;
@@ -36,31 +37,13 @@ export function LiveChat({
   const messageStartTime = useRef<number>(0);
 
   const livekit = useLiveKit();
+  const { refreshSessions, isSessionActive } = useSession();
 
-  // Function to check session status
-  const checkSessionStatus = async () => {
-    if (!sessionId) {
-      setSessionStatus('unknown');
-      return;
-    }
-    
-    try {
-      const response = await fetch(`/api/sessions`);
-      if (response.ok) {
-        const data = await response.json();
-        const session = data.sessions.find((s: any) => s.id === sessionId);
-        if (session) {
-          setSessionStatus(session.endedAt ? 'completed' : 'active');
-        } else {
-          setSessionStatus('unknown');
-        }
-      }
-    } catch (error) {
-      console.error('Error checking session status:', error);
-      setSessionStatus('unknown');
-    }
+  // Generate unique IDs to prevent React key conflicts
+  const generateUniqueId = (prefix: string = 'msg') => {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   };
-
+  
   // Function to save messages to database
   const saveMessageToDatabase = async (messageData: {
     sessionId: string;
@@ -76,7 +59,10 @@ export function LiveChat({
         body: JSON.stringify(messageData),
       });
 
-      if (!response.ok) {
+      if (response.ok) {
+        // Trigger session refresh to update message counts
+        refreshSessions();
+      } else {
         console.error('Failed to save message to database');
       }
     } catch (error) {
@@ -101,7 +87,8 @@ export function LiveChat({
           tokens: msg.tokens ? JSON.parse(msg.tokens) : undefined
         }));
         
-        setMessages(prev => [...dbMessages, ...prev]);
+        // Replace existing messages instead of appending to prevent duplicates
+        setMessages(dbMessages);
       }
     } catch (error) {
       console.error('Error loading messages from database:', error);
@@ -112,9 +99,10 @@ export function LiveChat({
   useEffect(() => {
     if (sessionId) {
       loadMessagesFromDatabase();
-      checkSessionStatus();
+      // Update session status from context
+      setSessionStatus(isSessionActive(sessionId) ? 'active' : 'completed');
     }
-  }, [sessionId]);
+  }, [sessionId, isSessionActive]);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = useCallback(() => {
@@ -133,7 +121,7 @@ export function LiveChat({
       if (message.type === 'token_stream') {
         // Handle streaming tokens from agent
         if (message.tokens && message.tokens.length > 0) {
-          const messageId = currentStreamingMessage.current || `agent-${Date.now()}`;
+          const messageId = currentStreamingMessage.current || generateUniqueId('agent');
           
           // Record start time for latency calculation
           if (!currentStreamingMessage.current) {
@@ -201,7 +189,7 @@ export function LiveChat({
       } else if (message.type === 'user_message' && message.userId !== userId) {
         // Handle messages from other users
         setMessages(prev => [...prev, {
-          id: `user-${Date.now()}`,
+          id: generateUniqueId('user'),
           type: 'user',
           content: message.content,
           timestamp: message.timestamp
@@ -209,7 +197,7 @@ export function LiveChat({
       } else if (message.type === 'error') {
         // Handle error messages
         setMessages(prev => [...prev, {
-          id: `error-${Date.now()}`,
+          id: generateUniqueId('error'),
           type: 'system',
           content: `Error: ${message.content}`,
           timestamp: message.timestamp
@@ -230,7 +218,7 @@ export function LiveChat({
       
       setIsJoined(true);
       setMessages(prev => [...prev, {
-        id: `system-${Date.now()}`,
+        id: generateUniqueId('system'),
         type: 'system',
         content: `Connected to room: ${roomName}`,
         timestamp: new Date().toISOString()
@@ -238,7 +226,7 @@ export function LiveChat({
     } catch (error) {
       console.error('Failed to join room:', error);
       setMessages(prev => [...prev, {
-        id: `error-${Date.now()}`,
+        id: generateUniqueId('error'),
         type: 'system',
         content: `Failed to connect: ${error instanceof Error ? error.message : 'Unknown error'}`,
         timestamp: new Date().toISOString()
@@ -251,7 +239,7 @@ export function LiveChat({
       await livekit.disconnect();
       setIsJoined(false);
       setMessages(prev => [...prev, {
-        id: `system-${Date.now()}`,
+        id: generateUniqueId('system'),
         type: 'system',
         content: 'Disconnected from room',
         timestamp: new Date().toISOString()
@@ -267,7 +255,7 @@ export function LiveChat({
     // Check if session is read-only
     if (sessionStatus === 'completed') {
       setMessages(prev => [...prev, {
-        id: `error-${Date.now()}`,
+        id: generateUniqueId('error'),
         type: 'system',
         content: 'Cannot send messages to a completed session. This session is read-only.',
         timestamp: new Date().toISOString()
@@ -276,7 +264,7 @@ export function LiveChat({
     }
 
     const userMessage: ChatMessage = {
-      id: `user-${Date.now()}`,
+      id: generateUniqueId('user'),
       type: 'user',
       content: inputValue,
       timestamp: new Date().toISOString()
@@ -307,7 +295,7 @@ export function LiveChat({
     } catch (error) {
       console.error('Failed to send message:', error);
       setMessages(prev => [...prev, {
-        id: `error-${Date.now()}`,
+        id: generateUniqueId('error'),
         type: 'system',
         content: `Failed to send message: ${error instanceof Error ? error.message : 'Unknown error'}`,
         timestamp: new Date().toISOString()
