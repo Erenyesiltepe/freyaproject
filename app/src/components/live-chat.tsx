@@ -148,10 +148,15 @@ export function LiveChat({
     };
   }, [enumerateAudioDevices]);
 
-  // Apply device settings when they change or when connected
+  // Apply audio device settings when they change or when connected
   useEffect(() => {
     if (livekit.isConnected) {
       applyAudioDeviceSettings();
+    }
+    
+    // Store selected speaker for LiveKit to use
+    if (selectedSpeaker) {
+      localStorage.setItem('selectedSpeaker', selectedSpeaker);
     }
   }, [livekit.isConnected, selectedSpeaker, applyAudioDeviceSettings]);
 
@@ -228,6 +233,57 @@ export function LiveChat({
       }]);
     }
   }, [selectedMicrophone, audioDevices.microphones]);
+
+  // Test agent audio output
+  const testAgentAudio = useCallback(async () => {
+    if (!livekit.isConnected) {
+      setMessages(prev => [...prev, {
+        id: generateUniqueId('error'),
+        type: 'system',
+        content: '❌ Not connected to room. Join the room first.',
+        timestamp: new Date().toISOString(),
+        messageType: 'text'
+      }]);
+      return;
+    }
+
+    try {
+      setMessages(prev => [...prev, {
+        id: generateUniqueId('system'),
+        type: 'system',
+        content: '🔊 Testing agent audio output...',
+        timestamp: new Date().toISOString(),
+        messageType: 'text'
+      }]);
+
+      // Call the test audio RPC method
+      const result = await livekit.room?.localParticipant.performRpc({
+        destinationIdentity: '', // Empty means broadcast to all participants
+        method: 'test_audio_output',
+        payload: 'test'
+      });
+
+      console.log('Audio test result:', result);
+      
+      setMessages(prev => [...prev, {
+        id: generateUniqueId('system'),
+        type: 'system',
+        content: '✅ Audio test command sent. You should hear the agent speaking if audio is working properly.',
+        timestamp: new Date().toISOString(),
+        messageType: 'text'
+      }]);
+
+    } catch (error) {
+      console.error('Agent audio test failed:', error);
+      setMessages(prev => [...prev, {
+        id: generateUniqueId('error'),
+        type: 'system',
+        content: `❌ Agent audio test failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date().toISOString(),
+        messageType: 'text'
+      }]);
+    }
+  }, [livekit.isConnected, livekit.room]);
   
   // Function to save messages to database
   const saveMessageToDatabase = async (messageData: {
@@ -983,7 +1039,7 @@ export function LiveChat({
               </span>
             ) : (
               <span className="flex items-center gap-1">
-                � Start Call
+                Start Call
               </span>
             )}
           </Button>

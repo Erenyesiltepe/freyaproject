@@ -148,6 +148,74 @@ export function useLiveKit() {
         }));
       });
 
+      // Handle audio track subscriptions for agent speech
+      room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+        console.log('Track subscribed:', {
+          kind: track.kind,
+          source: publication.source,
+          participant: participant.identity
+        });
+
+        if (track.kind === 'audio') {
+          console.log(`Audio track from ${participant.identity} subscribed`);
+          
+          // Create audio element to play the agent's speech
+          const audioElement = track.attach() as HTMLAudioElement;
+          audioElement.autoplay = true;
+          (audioElement as any).playsInline = true;
+          
+          // Apply speaker device if selected
+          if ('setSinkId' in audioElement) {
+            const selectedSpeaker = localStorage.getItem('selectedSpeaker');
+            if (selectedSpeaker) {
+              (audioElement as any).setSinkId(selectedSpeaker).catch(console.warn);
+            }
+          }
+          
+          // Add to document to ensure playback
+          audioElement.style.display = 'none';
+          document.body.appendChild(audioElement);
+          
+          console.log('Audio element created and configured for playback');
+        }
+      });
+
+      room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+        console.log('Track unsubscribed:', {
+          kind: track.kind,
+          source: publication.source,
+          participant: participant.identity
+        });
+        
+        if (track.kind === 'audio') {
+          // Clean up audio elements
+          const audioElements = track.detach();
+          audioElements.forEach(element => {
+            if (element.parentNode) {
+              element.parentNode.removeChild(element);
+            }
+          });
+          console.log('Audio elements cleaned up');
+        }
+      });
+
+      // Auto-subscribe to all tracks (especially agent audio)
+      room.on(RoomEvent.TrackPublished, (publication, participant) => {
+        console.log('Track published:', {
+          kind: publication.kind,
+          source: publication.source,
+          participant: participant.identity
+        });
+        
+        // Auto-subscribe to agent audio tracks
+        if (publication.kind === 'audio' && 
+            (participant.identity.includes('agent') || 
+             participant.identity.includes('Assistant'))) {
+          console.log('Auto-subscribing to agent audio track');
+          publication.setSubscribed(true);
+        }
+      });
+
       // Set up text stream handlers for transcriptions and chat
       room.registerTextStreamHandler('lk.transcription', async (reader, participantInfo) => {
         try {
