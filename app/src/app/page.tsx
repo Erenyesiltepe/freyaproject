@@ -7,11 +7,8 @@ import { HealthCheck } from '@/components/health-check';
 import { RecentSessions } from '@/components/recent-sessions';
 import { SessionViewer } from '@/components/session-viewer';
 import { LiveChat } from '@/components/live-chat';
-import { SessionProvider, useSession } from '@/contexts/SessionContext';
+import { useSession } from '@/contexts/SessionContext';
 
-interface User {
-  email: string;
-}
 
 function HomeContent() {
   const [user, setUser] = useState<{id: string; email: string} | null>(null);
@@ -125,9 +122,5 @@ function HomeContent() {
 }
 
 export default function Home() {
-  return (
-    <SessionProvider>
-      <HomeContent />
-    </SessionProvider>
-  );
+  return <HomeContent />;
 }

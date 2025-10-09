@@ -1,6 +1,7 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { create } from 'zustand';
+import type { StateCreator } from 'zustand';
 
 interface Session {
   id: string;
@@ -16,64 +17,56 @@ interface Session {
   };
 }
 
-interface SessionContextType {
+interface SessionStoreState {
   sessions: Session[];
   selectedSessionId: string | null;
   loading: boolean;
   error: string | null;
-  
+
   // Actions
   refreshSessions: () => Promise<void>;
   selectSession: (sessionId: string | null) => void;
   createSession: (promptId: string, metadata?: any) => Promise<Session | null>;
   endSession: (sessionId: string) => Promise<void>;
-  
-  // Utility functions
+
+  // Utility
   getActiveSession: () => Session | null;
   getSessionById: (sessionId: string) => Session | null;
   isSessionActive: (sessionId: string) => boolean;
 }
 
-const SessionContext = createContext<SessionContextType | undefined>(undefined);
+// Create zustand store with same semantics as previous context
+const createSessionStore: StateCreator<SessionStoreState> = (set, get) => ({
+  sessions: [],
+  selectedSessionId: null,
+  loading: false,
+  error: null,
 
-export function SessionProvider({ children }: { children: React.ReactNode }) {
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Refresh sessions from API
-  const refreshSessions = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    
+  refreshSessions: async () => {
+    set({ loading: true, error: null });
     try {
       const response = await fetch('/api/sessions?limit=50');
       if (response.ok) {
         const data = await response.json();
-        setSessions(data.sessions || []);
+        set({ sessions: data.sessions || [] });
       } else {
         throw new Error('Failed to fetch sessions');
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(errorMessage);
+      set({ error: errorMessage });
       console.error('Error loading sessions:', err);
     } finally {
-      setLoading(false);
+      set({ loading: false });
     }
-  }, []);
+  },
 
-  // Select a session
-  const selectSession = useCallback((sessionId: string | null) => {
-    setSelectedSessionId(sessionId);
-  }, []);
+  selectSession: (sessionId: string | null) => {
+    set({ selectedSessionId: sessionId });
+  },
 
-  // Create a new session
-  const createSession = useCallback(async (promptId: string, metadata: any = {}) => {
-    setLoading(true);
-    setError(null);
-    
+  createSession: async (promptId: string, metadata: any = {}) => {
+    set({ loading: true, error: null });
     try {
       const response = await fetch('/api/sessions', {
         method: 'POST',
@@ -83,46 +76,40 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
       if (response.ok) {
         const data = await response.json();
-        const newSession = data.session;
-        
-        // Update sessions list immediately (optimistic update)
-        setSessions(prev => {
-          // Mark previous sessions as ended (optimistic)
-          const updatedPrev = prev.map(session => 
+        const newSession: Session = data.session;
+
+        set((state: SessionStoreState) => {
+          const updatedPrev = state.sessions.map((session: Session) =>
             !session.endedAt ? { ...session, endedAt: new Date().toISOString() } : session
           );
-          
-          // Ensure _count field is present for new session
+
           const sessionWithCount = {
             ...newSession,
-            _count: newSession._count || { messages: 0 }
+            _count: newSession._count || { messages: 0 },
           };
-          
-          return [sessionWithCount, ...updatedPrev];
+
+          return { sessions: [sessionWithCount, ...updatedPrev] } as Partial<SessionStoreState>;
         });
-        
+
         // Refresh to get accurate data from server
-        setTimeout(() => refreshSessions(), 100);
-        
+        setTimeout(() => get().refreshSessions(), 100);
+
         return newSession;
       } else {
         throw new Error('Failed to create session');
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(errorMessage);
+      set({ error: errorMessage });
       console.error('Error creating session:', err);
       return null;
     } finally {
-      setLoading(false);
+      set({ loading: false });
     }
-  }, [refreshSessions]);
+  },
 
-  // End a session
-  const endSession = useCallback(async (sessionId: string) => {
-    setLoading(true);
-    setError(null);
-    
+  endSession: async (sessionId: string) => {
+    set({ loading: true, error: null });
     try {
       const response = await fetch('/api/sessions', {
         method: 'PATCH',
@@ -131,73 +118,50 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (response.ok) {
-        // Update session in local state immediately (optimistic update)
-        setSessions(prev => prev.map(session => 
-          session.id === sessionId 
-            ? { ...session, endedAt: new Date().toISOString() }
-            : session
-        ));
-        
+        set((state: SessionStoreState) => ({
+          sessions: state.sessions.map((session: Session) =>
+            session.id === sessionId ? { ...session, endedAt: new Date().toISOString() } : session
+          ),
+        }));
+
         // Refresh to get accurate data from server
-        setTimeout(() => refreshSessions(), 100);
+        setTimeout(() => get().refreshSessions(), 100);
       } else {
         throw new Error('Failed to end session');
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(errorMessage);
+      set({ error: errorMessage });
       console.error('Error ending session:', err);
     } finally {
-      setLoading(false);
+      set({ loading: false });
     }
-  }, [refreshSessions]);
+  },
 
-  // Utility functions
-  const getActiveSession = useCallback(() => {
-    return sessions.find(session => !session.endedAt) || null;
-  }, [sessions]);
+  getActiveSession: () => {
+    const sessions = get().sessions;
+    return sessions.find((s: Session) => !s.endedAt) || null;
+  },
 
-  const getSessionById = useCallback((sessionId: string) => {
-    return sessions.find(session => session.id === sessionId) || null;
-  }, [sessions]);
+  getSessionById: (sessionId: string) => {
+    const sessions = get().sessions;
+    return sessions.find((s: Session) => s.id === sessionId) || null;
+  },
 
-  const isSessionActive = useCallback((sessionId: string) => {
-    const session = getSessionById(sessionId);
+  isSessionActive: (sessionId: string) => {
+    const session = get().sessions.find((s: Session) => s.id === sessionId);
     return session ? !session.endedAt : false;
-  }, [getSessionById]);
+  },
+});
 
-  // Initial load
-  useEffect(() => {
-    refreshSessions();
-  }, [refreshSessions]);
+export const useSessionStore = create<SessionStoreState>(createSessionStore);
 
-  const value: SessionContextType = {
-    sessions,
-    selectedSessionId,
-    loading,
-    error,
-    refreshSessions,
-    selectSession,
-    createSession,
-    endSession,
-    getActiveSession,
-    getSessionById,
-    isSessionActive,
-  };
-
-  return (
-    <SessionContext.Provider value={value}>
-      {children}
-    </SessionContext.Provider>
-  );
-}
-
+// Keep the same named hook `useSession` to minimize required changes across the app.
 export function useSession() {
-  const context = useContext(SessionContext);
-  if (context === undefined) {
-    throw new Error('useSession must be used within a SessionProvider');
-  }
-  return context;
+  // Select full API object with shallow equality to avoid unnecessary re-renders
+  // Return the full store API directly. Consumers can destructure the same
+  // fields they used before when this was a Context.
+  return useSessionStore();
 }
 
-export type { Session, SessionContextType };
+export type { Session, SessionStoreState as SessionContextType };
