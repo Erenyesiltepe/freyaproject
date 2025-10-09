@@ -70,11 +70,18 @@ class MultimodalHandler:
         self.room = room
         self.chat_ctx = llm.ChatContext()
         self.current_message_id = 0
+        self.voice_active = False  # Track if voice interaction is in progress
         
-    async def handle_text_message(self, message_text: str, participant):
-        """Handle incoming text messages and stream response back in real-time"""
+    async def handle_text_message(self, message_text: str, participant, input_source="text"):
+        """Handle incoming text messages and stream response back in real-time
+        
+        Args:
+            message_text: The text message content
+            participant: The participant who sent the message
+            input_source: Either 'text' (direct text input) or 'voice' (transcribed speech)
+        """
         participant_id = getattr(participant, 'identity', 'unknown') if participant else 'unknown'
-        logger.info(f"Received text message from {participant_id}: {message_text}")
+        logger.info(f"Received {input_source} message from {participant_id}: {message_text}")
         
         try:
             # Create a unique message ID for this conversation
@@ -90,20 +97,15 @@ class MultimodalHandler:
             session_llm = self.session._llm
             if not session_llm:
                 logger.error("No LLM available in session")
-                # Send a simple fallback response
-                fallback_response = "I'm sorry, but I'm having trouble connecting to my language model. Please try again later."
-                await self.room.local_participant.publish_data(
-                    fallback_response.encode('utf-8'),
-                    reliable=True,
-                    topic="assistant_text_stream"
-                )
+                await self._send_fallback_response(message_id, input_source)
                 return
                 
-            # Send initial response indicator
+            # Send initial response indicator with input source info
+            response_topic = "lk.chat" if input_source == "text" else "lk.transcription"
             await self.room.local_participant.publish_data(
-                f"__START_RESPONSE__{message_id}".encode('utf-8'),
+                f"__START_RESPONSE__{message_id}__{input_source}".encode('utf-8'),
                 reliable=True,
-                topic="assistant_text_stream"
+                topic=response_topic
             )
             
             # Generate streaming response
@@ -112,48 +114,35 @@ class MultimodalHandler:
                 stream = session_llm.chat(chat_ctx=self.chat_ctx)
                 
                 async for chunk in stream:
-                    # Handle different response formats (OpenAI vs Google)
-                    content = ""
-                    if hasattr(chunk, 'choices') and len(chunk.choices) > 0:
-                        # OpenAI format
-                        delta = chunk.choices[0].delta
-                        if hasattr(delta, 'content') and delta.content:
-                            content = delta.content
-                    elif hasattr(chunk, 'content'):
-                        # Google format
-                        content = chunk.content
-                    elif hasattr(chunk, 'text'):
-                        # Alternative format
-                        content = chunk.text
+                    content = self._extract_content_from_chunk(chunk)
                     
                     if content:
                         response_text += content
                         
-                        # Stream the token back to the client
+                        # Stream the token back to the client on appropriate topic
                         stream_data = f"{message_id}::{content}".encode('utf-8')
                         await self.room.local_participant.publish_data(
                             stream_data,
                             reliable=True,
-                            topic="assistant_text_stream"
+                            topic=response_topic
                         )
                         
             except Exception as stream_error:
                 logger.error(f"Error during streaming: {stream_error}")
-                # Fallback to a simple non-streaming response
-                response_text = "Hello! I received your message. How can I help you today?"
+                response_text = await self._get_fallback_response(input_source)
                 
                 stream_data = f"{message_id}::{response_text}".encode('utf-8')
                 await self.room.local_participant.publish_data(
                     stream_data,
                     reliable=True,
-                    topic="assistant_text_stream"
+                    topic=response_topic
                 )
             
             # Send end of response indicator
             await self.room.local_participant.publish_data(
-                f"__END_RESPONSE__{message_id}".encode('utf-8'),
+                f"__END_RESPONSE__{message_id}__{input_source}".encode('utf-8'),
                 reliable=True,
-                topic="assistant_text_stream"
+                topic=response_topic
             )
             
             # Add assistant response to context
@@ -162,17 +151,76 @@ class MultimodalHandler:
                     llm.ChatMessage.create(text=response_text, role="assistant")
                 )
                 
-                logger.info(f"Completed text response: {response_text[:100]}...")
+                logger.info(f"Completed {input_source} response: {response_text[:100]}...")
             
         except Exception as e:
-            logger.error(f"Error handling text message: {e}")
-            # Send error message to client
-            error_message = "Sorry, I encountered an error processing your message."
+            logger.error(f"Error handling {input_source} message: {e}")
+            await self._send_error_response(message_id, input_source)
+
+    def _extract_content_from_chunk(self, chunk):
+        """Extract content from different LLM response formats"""
+        content = ""
+        if hasattr(chunk, 'choices') and len(chunk.choices) > 0:
+            # OpenAI format
+            delta = chunk.choices[0].delta
+            if hasattr(delta, 'content') and delta.content:
+                content = delta.content
+        elif hasattr(chunk, 'content'):
+            # Google format
+            content = chunk.content
+        elif hasattr(chunk, 'text'):
+            # Alternative format
+            content = chunk.text
+        return content
+
+    async def _get_fallback_response(self, input_source):
+        """Get appropriate fallback response based on input source"""
+        if input_source == "text":
+            return "Hello! I received your message. How can I help you today?"
+        else:
+            return "I heard you speaking. How can I assist you?"
+
+    async def _send_fallback_response(self, message_id, input_source):
+        """Send fallback response when LLM is unavailable"""
+        fallback_response = "I'm sorry, but I'm having trouble connecting to my language model. Please try again later."
+        topic = "lk.chat" if input_source == "text" else "lk.transcription"
+        await self.room.local_participant.publish_data(
+            fallback_response.encode('utf-8'),
+            reliable=True,
+            topic=topic
+        )
+
+    async def _send_error_response(self, message_id, input_source):
+        """Send error response to client"""
+        error_message = "Sorry, I encountered an error processing your message."
+        topic = "lk.chat" if input_source == "text" else "lk.transcription"
+        await self.room.local_participant.publish_data(
+            error_message.encode('utf-8'),
+            reliable=True,
+            topic=topic
+        )
+
+    def should_use_voice_response(self, input_source):
+        """Determine if agent should respond with voice (TTS) or text only"""
+        # Voice input should get voice response, text input should get text response
+        return input_source == "voice"
+
+    async def handle_hybrid_response(self, response_text, input_source):
+        """Handle response based on input modality"""
+        if self.should_use_voice_response(input_source):
+            # For voice input, let the normal voice pipeline handle TTS
+            # The session will automatically convert text to speech
+            logger.info("Voice input detected - using voice pipeline for response")
+            return True  # Indicates voice pipeline should handle this
+        else:
+            # For text input, send text-only response
+            logger.info("Text input detected - sending text-only response")
             await self.room.local_participant.publish_data(
-                error_message.encode('utf-8'),
+                response_text.encode('utf-8'),
                 reliable=True,
-                topic="assistant_text_stream"
+                topic="lk.chat"
             )
+            return False  # Indicates text response was sent
 
 
 def prewarm(proc: JobProcess):
@@ -210,27 +258,89 @@ async def entrypoint(ctx: JobContext):
     # Create multimodal handler for text messaging
     multimodal_handler = MultimodalHandler(session, ctx.room)
 
+    # Set up transcription forwarding for voice interactions
+    @session.on("user_speech_committed")
+    def on_user_speech_committed(msg):
+        """Forward transcribed speech to the UI and handle as voice input"""
+        if hasattr(msg, 'transcript') and msg.transcript:
+            speech_text = msg.transcript
+        elif hasattr(msg, 'text'):
+            speech_text = msg.text
+        else:
+            speech_text = str(msg)
+            
+        logger.info(f"User speech transcribed: {speech_text}")
+        try:
+            # Publish transcription to room for UI display using lk.transcription topic
+            asyncio.create_task(
+                ctx.room.local_participant.publish_data(
+                    f"transcript::user::{speech_text}".encode('utf-8'),
+                    reliable=True,
+                    topic="lk.transcription"
+                )
+            )
+            
+            # Handle the transcribed speech as voice input
+            asyncio.create_task(
+                multimodal_handler.handle_text_message(speech_text, None, input_source="voice")
+            )
+        except Exception as e:
+            logger.error(f"Error forwarding transcription: {e}")
+
+    @session.on("agent_speech_committed")  
+    def on_agent_speech_committed(msg):
+        """Forward agent speech text to the UI"""
+        if hasattr(msg, 'transcript') and msg.transcript:
+            speech_text = msg.transcript
+        elif hasattr(msg, 'text'):
+            speech_text = msg.text
+        else:
+            speech_text = str(msg)
+            
+        logger.info(f"Agent speech generated: {speech_text}")
+        try:
+            # Publish agent speech text to room for UI display using lk.transcription topic
+            asyncio.create_task(
+                ctx.room.local_participant.publish_data(
+                    f"transcript::agent::{speech_text}".encode('utf-8'),
+                    reliable=True,
+                    topic="lk.transcription"
+                )
+            )
+        except Exception as e:
+            logger.error(f"Error forwarding agent speech: {e}")
+
     # Set up event handlers for text messaging
     @ctx.room.on("data_received")
     def on_data_received(data_packet, participant=None):
         """Handle incoming data packets (text messages)"""
         try:
             # Check if the data packet has the right topic
-            if hasattr(data_packet, 'topic') and data_packet.topic == "user_text_message":
-                message_text = data_packet.data.decode('utf-8')
-                logger.info(f"Received text message: {message_text}")
-                # Handle text message asynchronously
-                asyncio.create_task(
-                    multimodal_handler.handle_text_message(message_text, participant)
-                )
+            if hasattr(data_packet, 'topic'):
+                if data_packet.topic == "lk.chat":
+                    message_text = data_packet.data.decode('utf-8')
+                    logger.info(f"Received text message via lk.chat: {message_text}")
+                    # Handle text message asynchronously
+                    asyncio.create_task(
+                        multimodal_handler.handle_text_message(message_text, participant, input_source="text")
+                    )
+                elif data_packet.topic == "user_text_message":
+                    message_text = data_packet.data.decode('utf-8')
+                    logger.info(f"Received text message via user_text_message: {message_text}")
+                    # Handle text message asynchronously
+                    asyncio.create_task(
+                        multimodal_handler.handle_text_message(message_text, participant, input_source="text")
+                    )
+                else:
+                    logger.debug(f"Ignoring data packet with topic: {data_packet.topic}")
             elif hasattr(data_packet, 'data'):
-                # Try to decode as plain text if no topic or different topic
+                # Try to decode as plain text if no topic
                 try:
                     message_text = data_packet.data.decode('utf-8')
                     logger.info(f"Received data without topic: {message_text}")
-                    # Handle as text message anyway
+                    # Handle as text message
                     asyncio.create_task(
-                        multimodal_handler.handle_text_message(message_text, participant)
+                        multimodal_handler.handle_text_message(message_text, participant, input_source="text")
                     )
                 except UnicodeDecodeError:
                     logger.debug("Received non-text data packet, ignoring")
@@ -239,7 +349,7 @@ async def entrypoint(ctx: JobContext):
 
     @ctx.room.on("chat_message_received")
     def on_chat_message(chat_message, participant=None):
-        """Handle incoming chat messages"""
+        """Handle incoming chat messages via LiveKit's chat system"""
         try:
             # Make sure it's not from the agent itself
             if participant and participant != ctx.room.local_participant:
@@ -247,19 +357,78 @@ async def entrypoint(ctx: JobContext):
                 logger.info(f"Received chat message: {message_text}")
                 # Handle chat message as text input
                 asyncio.create_task(
-                    multimodal_handler.handle_text_message(message_text, participant)
+                    multimodal_handler.handle_text_message(message_text, participant, input_source="text")
                 )
         except Exception as e:
             logger.error(f"Error processing chat message: {e}")
+
+    # Handle interruptions and turn management
+    @session.on("user_started_speaking")
+    def on_user_started_speaking():
+        """Handle when user starts speaking (interruption handling)"""
+        logger.info("User started speaking - handling potential interruption")
+        multimodal_handler.voice_active = True
+        # The AgentSession automatically handles interruptions for TTS
+
+    @session.on("user_stopped_speaking")
+    def on_user_stopped_speaking():
+        """Handle when user stops speaking"""
+        logger.info("User stopped speaking")
+        multimodal_handler.voice_active = False
+
+    # Handle session state changes
+    @session.on("agent_started_speaking")
+    def on_agent_started_speaking():
+        """Handle when agent starts speaking"""
+        logger.info("Agent started speaking")
+
+    @session.on("agent_stopped_speaking")
+    def on_agent_stopped_speaking():
+        """Handle when agent stops speaking"""
+        logger.info("Agent stopped speaking")
 
     # Log when participants join/leave
     @ctx.room.on("participant_connected")
     def on_participant_connected(participant):
         logger.info(f"Participant connected: {participant.identity}")
+        # Send welcome message for text chat
+        asyncio.create_task(
+            ctx.room.local_participant.publish_data(
+                "Welcome! You can interact with me using voice or text.".encode('utf-8'),
+                reliable=True,
+                topic="lk.chat"
+            )
+        )
 
     @ctx.room.on("participant_disconnected")
     def on_participant_disconnected(participant):
         logger.info(f"Participant disconnected: {participant.identity}")
+
+    # Enhanced error handling for room events
+    @ctx.room.on("connection_quality_changed")
+    def on_connection_quality_changed(participant, quality):
+        logger.info(f"Connection quality changed for {participant.identity}: {quality}")
+
+    @ctx.room.on("track_published")
+    def on_track_published(track, participant):
+        logger.info(f"Track published by {participant.identity}: {track.kind}")
+
+    @ctx.room.on("track_unpublished")
+    def on_track_unpublished(track, participant):
+        logger.info(f"Track unpublished by {participant.identity}: {track.kind}")
+
+    # Global error handler for unhandled exceptions
+    def handle_exception(loop, context):
+        """Global exception handler for asyncio"""
+        exception = context.get('exception')
+        if exception:
+            logger.error(f"Unhandled exception in agent: {exception}", exc_info=True)
+        else:
+            logger.error(f"Unhandled error in agent: {context['message']}")
+
+    # Set up global exception handling
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(handle_exception)
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))

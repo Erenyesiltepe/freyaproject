@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { redirect } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { PromptLibrary } from '@/components/prompt-library';
 import { RecentSessions } from '@/components/recent-sessions';
 import { LiveChat } from '@/components/live-chat';
@@ -10,6 +10,7 @@ import { useSession } from '@/contexts/SessionContext';
 export default function ConsolePage() {
   const [user, setUser] = useState<{id: string; email: string} | null>(null);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
   const { selectedSessionId, selectSession, createSession } = useSession();
 
   const handleStartSession = async (promptId: string) => {
@@ -33,13 +34,30 @@ export default function ConsolePage() {
         setUser(data.user);
       } else {
         // Redirect to login if not authenticated
-        redirect('/login');
+        router.push('/login');
       }
     } catch (error) {
       console.error('Auth check failed:', error);
-      redirect('/login');
+      router.push('/login');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      const response = await fetch('/api/auth/logout', {
+        method: 'POST',
+      });
+      
+      if (response.ok) {
+        router.push('/login');
+        router.refresh();
+      } else {
+        console.error('Logout failed');
+      }
+    } catch (error) {
+      console.error('Logout error:', error);
     }
   };
 
@@ -62,8 +80,16 @@ export default function ConsolePage() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
             Agent Console
           </h1>
-          <div className="text-sm text-gray-600 dark:text-gray-300">
-            Welcome, {user?.email}
+          <div className="flex items-center gap-4">
+            <div className="text-sm text-gray-600 dark:text-gray-300">
+              Welcome, {user?.email}
+            </div>
+            <button
+              onClick={handleLogout}
+              className="px-3 py-1 text-sm bg-red-500 hover:bg-red-600 text-white rounded-md transition-colors"
+            >
+              Logout
+            </button>
           </div>
         </div>
         
