@@ -19,6 +19,8 @@ export interface LiveKitMessage {
     participantIdentity?: string;
     participantSid?: string;
     isAgent?: boolean;
+    segmentId?: string;
+    isFinal?: boolean;
   };
 }
 
@@ -146,123 +148,103 @@ export function useLiveKit() {
         }));
       });
 
-      room.on(RoomEvent.DataReceived, (payload, participant, kind, topic) => {
+      // Set up text stream handlers for transcriptions and chat
+      room.registerTextStreamHandler('lk.transcription', async (reader, participantInfo) => {
         try {
-          const decoder = new TextDecoder();
-          const messageText = decoder.decode(payload);
+          const message = await reader.readAll();
+          const attributes = reader.info?.attributes || {};
+          const isFinal = attributes['lk.transcription_final'] === 'true';
+          const isTranscription = attributes['lk.transcribed_track_id'] != null;
+          const segmentId = attributes['lk.segment_id'];
           
-          console.log(`Received data from ${participant?.identity || 'unknown'} on topic '${topic || 'default'}':`, messageText);
-          
-          // Handle messages based on topic (Phase 3 specification)
-          if (topic === 'lk.chat') {
-            // This is a text chat message - handle according to Phase 3
-            const message: LiveKitMessage = {
-              type: 'token_stream',
-              content: messageText,
-              timestamp: new Date().toISOString(),
-              metadata: {
-                participantIdentity: participant?.identity || 'unknown',
-                participantSid: participant?.sid,
-                isAgent: participant?.identity?.includes('agent') || participant?.identity?.includes('Assistant') || false
-              }
-            };
-            messageHandlers.current.forEach(handler => handler(message));
+          if (isTranscription) {
+            console.log(`Transcription from ${participantInfo.identity} [final=${isFinal}, segment=${segmentId}]:`, message);
             
-            // Send completion signal for chat messages
-            const completeMessage: LiveKitMessage = {
-              type: 'stream_complete',
-              content: '',
+            const livekitMessage: LiveKitMessage = {
+              type: isFinal ? 'token_stream' : 'token_stream',
+              content: message,
               timestamp: new Date().toISOString(),
               metadata: {
-                participantIdentity: participant?.identity || 'unknown'
+                participantIdentity: participantInfo.identity,
+                isAgent: participantInfo.identity?.includes('agent') || participantInfo.identity?.includes('Assistant') || false,
+                segmentId,
+                isFinal
               }
             };
-            messageHandlers.current.forEach(handler => handler(completeMessage));
-            return;
-          }
-          
-          // Handle agent streaming responses (existing logic for backward compatibility)
-          if (messageText.startsWith('__START_RESPONSE__')) {
-            // Start of new response - create placeholder message
-            const messageId = messageText.replace('__START_RESPONSE__', '');
-            const message: LiveKitMessage = {
-              type: 'token_stream',
-              content: '',
-              timestamp: new Date().toISOString(),
-              metadata: { 
-                messageId,
-                participantIdentity: participant?.identity || 'unknown',
-                isAgent: true
-              }
-            };
-            messageHandlers.current.forEach(handler => handler(message));
-          } else if (messageText.startsWith('__END_RESPONSE__')) {
-            // End of response
-            const messageId = messageText.replace('__END_RESPONSE__', '');
-            const message: LiveKitMessage = {
-              type: 'stream_complete',
-              content: '',
-              timestamp: new Date().toISOString(),
-              metadata: { 
-                messageId,
-                participantIdentity: participant?.identity || 'unknown',
-                isAgent: true
-              }
-            };
-            messageHandlers.current.forEach(handler => handler(message));
-          } else if (messageText.includes('::')) {
-            // Streaming token: "messageId::content"
-            const [messageId, content] = messageText.split('::', 2);
-            const message: LiveKitMessage = {
-              type: 'token_stream',
-              content,
-              timestamp: new Date().toISOString(),
-              tokens: [content],
-              metadata: { 
-                messageId,
-                participantIdentity: participant?.identity || 'unknown',
-                isAgent: true
-              }
-            };
-            messageHandlers.current.forEach(handler => handler(message));
-          } else {
-            // Try to parse as JSON (original format)
-            try {
-              const message: LiveKitMessage = JSON.parse(messageText);
-              console.log('Received JSON data from agent:', message);
-              message.metadata = {
-                ...message.metadata,
-                participantIdentity: participant?.identity || 'unknown',
-                isAgent: participant?.identity?.includes('agent') || participant?.identity?.includes('Assistant') || false
-              };
-              messageHandlers.current.forEach(handler => handler(message));
-            } catch (jsonError) {
-              // If not JSON, treat as plain text response
-              const message: LiveKitMessage = {
-                type: 'token_stream',
-                content: messageText,
-                timestamp: new Date().toISOString(),
-                metadata: {
-                  participantIdentity: participant?.identity || 'unknown',
-                  isAgent: participant?.identity?.includes('agent') || participant?.identity?.includes('Assistant') || false
-                }
-              };
-              messageHandlers.current.forEach(handler => handler(message));
-              
-              // Send completion signal
+            messageHandlers.current.forEach(handler => handler(livekitMessage));
+            
+            // Send completion signal for final transcriptions
+            if (isFinal) {
               const completeMessage: LiveKitMessage = {
                 type: 'stream_complete',
                 content: '',
                 timestamp: new Date().toISOString(),
                 metadata: {
-                  participantIdentity: participant?.identity || 'unknown'
+                  participantIdentity: participantInfo.identity,
+                  segmentId
                 }
               };
               messageHandlers.current.forEach(handler => handler(completeMessage));
             }
+          } else {
+            // Regular text message
+            console.log(`Text message from ${participantInfo.identity}:`, message);
+            const livekitMessage: LiveKitMessage = {
+              type: 'token_stream',
+              content: message,
+              timestamp: new Date().toISOString(),
+              metadata: {
+                participantIdentity: participantInfo.identity,
+                isAgent: participantInfo.identity?.includes('agent') || participantInfo.identity?.includes('Assistant') || false
+              }
+            };
+            messageHandlers.current.forEach(handler => handler(livekitMessage));
+            
+            // Send completion signal
+            const completeMessage: LiveKitMessage = {
+              type: 'stream_complete',
+              content: '',
+              timestamp: new Date().toISOString(),
+              metadata: {
+                participantIdentity: participantInfo.identity
+              }
+            };
+            messageHandlers.current.forEach(handler => handler(completeMessage));
           }
         } catch (error) {
-          console.error('Failed to parse received data:', error);
+          console.error('Error reading text stream:', error);
+        }
+      });
+
+      // Set up chat stream handler for lk.chat topic
+      room.registerTextStreamHandler('lk.chat', async (reader, participantInfo) => {
+        try {
+          const message = await reader.readAll();
+          console.log(`Chat message from ${participantInfo.identity}:`, message);
+          
+          const livekitMessage: LiveKitMessage = {
+            type: 'token_stream',
+            content: message,
+            timestamp: new Date().toISOString(),
+            metadata: {
+              participantIdentity: participantInfo.identity,
+              isAgent: participantInfo.identity?.includes('agent') || participantInfo.identity?.includes('Assistant') || false
+            }
+          };
+          messageHandlers.current.forEach(handler => handler(livekitMessage));
+          
+          // Send completion signal
+          const completeMessage: LiveKitMessage = {
+            type: 'stream_complete',
+            content: '',
+            timestamp: new Date().toISOString(),
+            metadata: {
+              participantIdentity: participantInfo.identity
+            }
+          };
+          messageHandlers.current.forEach(handler => handler(completeMessage));
+        } catch (error) {
+          console.error('Error reading chat stream:', error);
         }
       });
 
@@ -334,19 +316,14 @@ export function useLiveKit() {
       timestamp: new Date().toISOString(),
     };
 
-    // For text messages, use the 'lk.chat' topic as specified in Phase 3
+    // For text messages, use the proper sendText method with 'lk.chat' topic
     if (message.type === 'user_message') {
-      const encoder = new TextEncoder();
       const messageText = message.content;
       
-      // Send text message using 'lk.chat' topic (Phase 3 specification)
-      await state.room.localParticipant.publishData(
-        encoder.encode(messageText), 
-        { 
-          reliable: true,
-          topic: 'lk.chat'
-        }
-      );
+      // Send text message using the official sendText method with lk.chat topic
+      await state.room.localParticipant.sendText(messageText, {
+        topic: 'lk.chat'
+      });
       
       console.log('Sent text message to room via lk.chat topic:', messageText);
     } else {

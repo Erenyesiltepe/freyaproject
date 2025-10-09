@@ -110,7 +110,7 @@ export default function ConsolePage() {
             </div>
           </div>
             
-          <div>
+            <div>
             <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
               Live Chat with AI Agent
             </h2>
@@ -118,9 +118,9 @@ export default function ConsolePage() {
               sessionId={selectedSessionId || undefined}
               userId={user?.id}
               username={user?.email || 'Guest'}
-              roomName="agent-console-room"
+              roomName={`console-${selectedSessionId || 'default'}`}
             />
-          </div>
+            </div>
         </div>
       </div>
     </div>

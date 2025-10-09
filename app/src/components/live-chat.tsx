@@ -119,7 +119,7 @@ export function LiveChat({
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // Handle incoming LiveKit messages
+  // Handle incoming LiveKit messages with improved text streams support
   useEffect(() => {
     const removeHandler = livekit.addMessageHandler((message: LiveKitMessage) => {
       console.log('Received LiveKit message:', message);
@@ -131,8 +131,13 @@ export function LiveChat({
                          false;
 
       if (message.type === 'token_stream') {
-        // Handle streaming tokens from agent or other participants
-        if (message.tokens && message.tokens.length > 0 || message.content) {
+        // Handle both text messages and transcriptions
+        const content = message.content;
+        const isTranscription = message.metadata?.segmentId !== undefined;
+        const isFinal = message.metadata?.isFinal !== false; // Default to true for non-transcription messages
+        
+        if (content && (isFinal || !isTranscription)) {
+          // For final transcriptions or regular text messages, process normally
           const messageId = currentStreamingMessage.current || generateUniqueId(isFromAgent ? 'agent' : 'user');
           
           // Record start time for latency calculation
@@ -143,28 +148,27 @@ export function LiveChat({
 
           setMessages(prev => {
             const existingIndex = prev.findIndex(m => m.id === messageId);
-            const newContent = message.content || message.tokens?.join(' ') || '';
             
             if (existingIndex >= 0) {
-              // Update existing streaming message
+              // Update existing message with new content
               const updated = [...prev];
               updated[existingIndex] = {
                 ...updated[existingIndex],
-                content: newContent,
+                content: content,
                 timestamp: message.timestamp,
-                isStreaming: true
+                isStreaming: !isFinal,
+                messageType: isTranscription ? 'voice_transcript' : 'text'
               };
               return updated;
             } else {
-              // Create new streaming message
+              // Create new message
               return [...prev, {
                 id: messageId,
                 type: isFromAgent ? 'agent' : 'user',
-                content: newContent,
+                content: content,
                 timestamp: message.timestamp,
-                isStreaming: true,
-                tokens: message.tokens,
-                messageType: 'text'
+                isStreaming: !isFinal,
+                messageType: isTranscription ? 'voice_transcript' : 'text'
               }];
             }
           });
@@ -222,63 +226,6 @@ export function LiveChat({
 
     return removeHandler;
   }, [livekit, userId, sessionId]);
-
-  // Phase 4b: Handle transcription data from lk.transcription topic
-  useEffect(() => {
-    if (!livekit.room) return;
-
-    const handleTranscriptionData = (payload: Uint8Array, participant: any, kind: any, topic?: string) => {
-      // Phase 4b: Check for lk.transcription topic
-      if (topic === 'lk.transcription') {
-        try {
-          const decoder = new TextDecoder();
-          const transcriptionData = decoder.decode(payload);
-          console.log('Received transcription data:', transcriptionData);
-          
-          // Parse transcription format: "transcript::speaker::text"
-          if (transcriptionData.startsWith('transcript::')) {
-            const parts = transcriptionData.split('::');
-            if (parts.length >= 3) {
-              const speaker = parts[1]; // 'user' or 'agent'
-              const text = parts.slice(2).join('::'); // Rejoin in case text contains '::'
-              
-              // Add transcription to messages
-              setMessages(prev => [...prev, {
-                id: generateUniqueId('transcript'),
-                type: speaker === 'agent' ? 'agent' : 'user',
-                content: text,
-                timestamp: new Date().toISOString(),
-                messageType: 'voice_transcript',
-                isStreaming: false
-              }]);
-              
-              // Save to database if it's from user and we have a session
-              if (speaker === 'user' && sessionId) {
-                saveMessageToDatabase({
-                  sessionId,
-                  role: 'user',
-                  content: text,
-                  tokens: undefined,
-                  latencyMs: undefined
-                });
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Error parsing transcription data:', error);
-        }
-      }
-    };
-
-    // Subscribe to data received events for transcriptions
-    livekit.room.on('dataReceived', handleTranscriptionData);
-
-    return () => {
-      if (livekit.room) {
-        livekit.room.off('dataReceived', handleTranscriptionData);
-      }
-    };
-  }, [livekit.room, sessionId]);
 
   // Phase 5: Sort messages chronologically for unified chat log
   const sortedMessages = useMemo(() => {
@@ -440,6 +387,18 @@ export function LiveChat({
       if (livekit.room && livekit.isConnected) {
         await livekit.room.localParticipant.setMicrophoneEnabled(true);
         
+        // Tell the agent to switch to voice mode
+        try {
+          await livekit.room.localParticipant.performRpc({
+            destinationIdentity: '', // Empty means broadcast to all participants
+            method: 'toggle_communication_mode',
+            payload: 'voice'
+          });
+          console.log('Agent switched to voice mode');
+        } catch (rpcError) {
+          console.warn('Failed to notify agent of voice mode:', rpcError);
+        }
+        
         // Add a system message to indicate voice mode is active
         setMessages(prev => [...prev, {
           id: generateUniqueId('system'),
@@ -474,6 +433,18 @@ export function LiveChat({
       // Phase 4a: Disable microphone using LiveKit SDK
       if (livekit.room && livekit.isConnected) {
         await livekit.room.localParticipant.setMicrophoneEnabled(false);
+        
+        // Tell the agent to switch to text mode
+        try {
+          await livekit.room.localParticipant.performRpc({
+            destinationIdentity: '', // Empty means broadcast to all participants
+            method: 'toggle_communication_mode',
+            payload: 'text'
+          });
+          console.log('Agent switched to text mode');
+        } catch (rpcError) {
+          console.warn('Failed to notify agent of text mode:', rpcError);
+        }
         
         // Add a system message to indicate text mode is active
         setMessages(prev => [...prev, {
