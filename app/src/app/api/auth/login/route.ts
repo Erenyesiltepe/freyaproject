@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { createDevUser } from '@/lib/auth';
+import { loginOrCreateUser } from '@/lib/auth';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'Email is required' }, { status: 400 });
     }
 
-    const { user, token } = await createDevUser(email);
+    const { user, token } = await loginOrCreateUser(email);
     
     // Set cookie
     const response = Response.json({ 
@@ -25,6 +25,7 @@ export async function POST(request: NextRequest) {
       }`
     );
 
+    logger.info('User login successful', { userId: user.id, email: user.email });
     return response;
   } catch (error) {
     logger.error('Login failed', { error });

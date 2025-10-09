@@ -8,18 +8,40 @@ export async function generateDevToken(): Promise<string> {
   return Math.random().toString(36).substring(2) + Date.now().toString(36);
 }
 
-export async function createDevUser(email: string): Promise<{ user: any; token: string }> {
-  const token = await generateDevToken();
-  
-  const user = await prisma.user.create({
-    data: {
-      email,
-      token,
-    },
+export async function loginOrCreateUser(email: string): Promise<{ user: any; token: string }> {
+  // First, try to find existing user
+  let user = await prisma.user.findUnique({
+    where: { email },
   });
 
-  logger.info('Dev user created', { userId: user.id, email });
+  let token: string;
+
+  if (user) {
+    // User exists, generate new token and update
+    token = await generateDevToken();
+    user = await prisma.user.update({
+      where: { id: user.id },
+      data: { token },
+    });
+    logger.info('Existing user logged in', { userId: user.id, email });
+  } else {
+    // User doesn't exist, create new one
+    token = await generateDevToken();
+    user = await prisma.user.create({
+      data: {
+        email,
+        token,
+      },
+    });
+    logger.info('New dev user created', { userId: user.id, email });
+  }
+
   return { user, token };
+}
+
+export async function createDevUser(email: string): Promise<{ user: any; token: string }> {
+  // Deprecated: Use loginOrCreateUser instead
+  return loginOrCreateUser(email);
 }
 
 export async function getCurrentUser() {
@@ -48,5 +70,11 @@ export async function setAuthCookie(token: string) {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     maxAge: 60 * 60 * 24 * 7, // 7 days
+    path: '/', // Ensure cookie is available across the whole app
   });
+}
+
+export async function clearAuthCookie() {
+  const cookieStore = cookies();
+  (await cookieStore).delete(DEV_TOKEN_COOKIE);
 }

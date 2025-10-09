@@ -11,12 +11,15 @@ interface LoginProps {
 export function Login({ onLogin }: LoginProps) {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) return;
 
     setLoading(true);
+    setError(null);
+    
     try {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
@@ -25,12 +28,17 @@ export function Login({ onLogin }: LoginProps) {
       });
 
       if (response.ok) {
-        onLogin();
+        // Small delay to ensure cookie is set
+        setTimeout(() => {
+          onLogin();
+        }, 100);
       } else {
-        console.error('Login failed');
+        const errorData = await response.json();
+        setError(errorData.error || 'Login failed');
       }
     } catch (error) {
       console.error('Login error:', error);
+      setError('Network error. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -54,6 +62,11 @@ export function Login({ onLogin }: LoginProps) {
                 required
               />
             </div>
+            {error && (
+              <div className="text-red-600 text-sm text-center">
+                {error}
+              </div>
+            )}
             <Button type="submit" disabled={loading || !email} className="w-full">
               {loading ? 'Logging in...' : 'Login'}
             </Button>
