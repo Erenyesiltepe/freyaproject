@@ -87,12 +87,12 @@ function HomeContent() {
               selectedSessionId={selectedSessionId || undefined} 
             />
             
-            <div className="mt-6">
+            {/* <div className="mt-6">
               <h2 className="text-xl font-semibold mb-4 text-gray-900 dark:text-white">
                 System Health
               </h2>
               <HealthCheck />
-            </div>
+            </div> */}
           </div>
           
           <div>

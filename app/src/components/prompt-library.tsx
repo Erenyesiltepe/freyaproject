@@ -208,54 +208,56 @@ export function PromptLibrary({ onStartSession }: PromptLibraryProps) {
       )}
 
       <div className="space-y-4">
-        {prompts.map(prompt => (
-          <Card key={prompt.id}>
-            <CardHeader>
-              <CardTitle className="flex justify-between items-start">
-                <span>{prompt.title}</span>
-                <div className="flex gap-2">
-                  {onStartSession && (
+        <div className="max-h-[450px] overflow-y-auto pr-2">
+          {prompts.map(prompt => (
+            <Card key={prompt.id}>
+              <CardHeader>
+                <CardTitle className="flex justify-between items-start">
+                  <span>{prompt.title}</span>
+                  <div className="flex gap-2">
+                    {onStartSession && (
+                      <Button 
+                        variant="default" 
+                        size="sm"
+                        onClick={() => onStartSession(prompt.id)}
+                      >
+                        Start Session
+                      </Button>
+                    )}
                     <Button 
-                      variant="default" 
+                      variant="outline" 
                       size="sm"
-                      onClick={() => onStartSession(prompt.id)}
+                      onClick={() => startEdit(prompt)}
                     >
-                      Start Session
+                      Edit
                     </Button>
-                  )}
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => startEdit(prompt)}
-                  >
-                    Edit
-                  </Button>
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={() => handleDeletePrompt(prompt.id)}
-                  >
-                    Delete
-                  </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => handleDeletePrompt(prompt.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-gray-600 dark:text-gray-300 mb-2">{prompt.body}</p>
+                <div className="flex flex-wrap gap-1 mb-2">
+                  {prompt.tags.map(tag => (
+                    <span 
+                      key={tag}
+                      className="px-2 py-1 bg-gray-200 dark:bg-slate-700 text-xs rounded"
+                    >
+                      {tag}
+                    </span>
+                  ))}
                 </div>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-gray-600 dark:text-gray-300 mb-2">{prompt.body}</p>
-              <div className="flex flex-wrap gap-1 mb-2">
-                {prompt.tags.map(tag => (
-                  <span 
-                    key={tag}
-                    className="px-2 py-1 bg-gray-200 dark:bg-slate-700 text-xs rounded"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-              <p className="text-xs text-gray-500">v{prompt.version} • {new Date(prompt.updatedAt).toLocaleDateString()}</p>
-            </CardContent>
-          </Card>
-        ))}
+                <p className="text-xs text-gray-500">v{prompt.version} • {new Date(prompt.updatedAt).toLocaleDateString()}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
     </div>
   );
