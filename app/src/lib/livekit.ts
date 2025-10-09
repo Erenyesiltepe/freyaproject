@@ -15,6 +15,7 @@ export interface LiveKitMessage {
     totalTokens?: number;
     latencyMs?: number;
     model?: string;
+    messageId?: string;
   };
 }
 
@@ -146,14 +147,85 @@ export function useLiveKit() {
         try {
           const decoder = new TextDecoder();
           const messageText = decoder.decode(payload);
-          const message: LiveKitMessage = JSON.parse(messageText);
           
-          console.log('Received data from agent:', message);
-          
-          // Notify all message handlers
-          messageHandlers.current.forEach(handler => handler(message));
+          // Check if this is a Python agent response (starts with specific markers or contains ::)
+          if (messageText.startsWith('__START_RESPONSE__')) {
+            // Start of new response - create placeholder message
+            const messageId = messageText.replace('__START_RESPONSE__', '');
+            const message: LiveKitMessage = {
+              type: 'token_stream',
+              content: '',
+              timestamp: new Date().toISOString(),
+              metadata: { messageId }
+            };
+            messageHandlers.current.forEach(handler => handler(message));
+          } else if (messageText.startsWith('__END_RESPONSE__')) {
+            // End of response
+            const messageId = messageText.replace('__END_RESPONSE__', '');
+            const message: LiveKitMessage = {
+              type: 'stream_complete',
+              content: '',
+              timestamp: new Date().toISOString(),
+              metadata: { messageId }
+            };
+            messageHandlers.current.forEach(handler => handler(message));
+          } else if (messageText.includes('::')) {
+            // Streaming token: "messageId::content"
+            const [messageId, content] = messageText.split('::', 2);
+            const message: LiveKitMessage = {
+              type: 'token_stream',
+              content,
+              timestamp: new Date().toISOString(),
+              tokens: [content],
+              metadata: { messageId }
+            };
+            messageHandlers.current.forEach(handler => handler(message));
+          } else {
+            // Try to parse as JSON (original format)
+            try {
+              const message: LiveKitMessage = JSON.parse(messageText);
+              console.log('Received JSON data from agent:', message);
+              messageHandlers.current.forEach(handler => handler(message));
+            } catch (jsonError) {
+              // If not JSON, treat as plain text response
+              const message: LiveKitMessage = {
+                type: 'token_stream',
+                content: messageText,
+                timestamp: new Date().toISOString()
+              };
+              messageHandlers.current.forEach(handler => handler(message));
+              
+              // Send completion signal
+              const completeMessage: LiveKitMessage = {
+                type: 'stream_complete',
+                content: '',
+                timestamp: new Date().toISOString()
+              };
+              messageHandlers.current.forEach(handler => handler(completeMessage));
+            }
+          }
         } catch (error) {
           console.error('Failed to parse received data:', error);
+        }
+      });
+
+      // Also listen for chat messages
+      room.on(RoomEvent.ChatMessage, (message, participant) => {
+        if (participant && participant !== room.localParticipant) {
+          const livekitMessage: LiveKitMessage = {
+            type: 'token_stream',
+            content: message.message,
+            timestamp: new Date().toISOString()
+          };
+          messageHandlers.current.forEach(handler => handler(livekitMessage));
+          
+          // Send completion signal
+          const completeMessage: LiveKitMessage = {
+            type: 'stream_complete',
+            content: '',
+            timestamp: new Date().toISOString()
+          };
+          messageHandlers.current.forEach(handler => handler(completeMessage));
         }
       });
 
@@ -205,13 +277,33 @@ export function useLiveKit() {
       timestamp: new Date().toISOString(),
     };
 
-    const encoder = new TextEncoder();
-    const data = encoder.encode(JSON.stringify(messageWithTimestamp));
-
-    // Send via data channel to all participants (including agent)
-    await state.room.localParticipant.publishData(data, { reliable: true });
-    
-    console.log('Sent message to room:', messageWithTimestamp);
+    // For text messages, send via both data packet (for Python agent) and chat message (for compatibility)
+    if (message.type === 'user_message') {
+      // Send as data packet with topic for Python agent
+      const encoder = new TextEncoder();
+      const messageText = message.content;
+      await state.room.localParticipant.publishData(
+        encoder.encode(messageText), 
+        { 
+          reliable: true,
+          topic: 'user_text_message'
+        }
+      );
+      
+      // Also send as chat message for compatibility  
+      await state.room.localParticipant.publishData(
+        encoder.encode(JSON.stringify({ type: 'chat', message: messageText })),
+        { reliable: true }
+      );
+      
+      console.log('Sent text message to room:', messageText);
+    } else {
+      // For other message types, use the original method
+      const encoder = new TextEncoder();
+      const data = encoder.encode(JSON.stringify(messageWithTimestamp));
+      await state.room.localParticipant.publishData(data, { reliable: true });
+      console.log('Sent message to room:', messageWithTimestamp);
+    }
   }, [state.room, state.isConnected]);
 
   // Cleanup on unmount

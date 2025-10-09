@@ -1,0 +1,4 @@
+uv python install 3.10
+uv sync --python 3.10
+
+updated pyproject.toml
