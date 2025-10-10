@@ -28,6 +28,7 @@ export interface LiveKitConnectionOptions {
   roomName: string;
   username: string;
   userId?: string;
+  sessionId?: string; // Add sessionId to pass to token generation
 }
 
 export interface LiveKitConnectionState {
@@ -93,6 +94,7 @@ export function useLiveKit() {
           roomName: options.roomName,
           identity: uniqueIdentity,
           userId: options.userId,
+          sessionId: options.sessionId, // Pass sessionId for room metadata
         }),
       });
 

@@ -1,4 +1,5 @@
 import logging
+import json
 
 from dotenv import load_dotenv
 from livekit import rtc
@@ -14,7 +15,7 @@ from livekit.agents import (
     cli,
     metrics,
 )
-from livekit.agents.llm import function_tool
+from livekit.agents.llm import function_tool, ChatContext
 from livekit.plugins import noise_cancellation, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -24,15 +25,11 @@ load_dotenv(".env.local")
 
 
 class Assistant(Agent):
-    def __init__(self) -> None:
-        super().__init__(
-            instructions="""You are a helpful AI assistant that supports both voice and text interactions. 
-            When users speak to you, respond naturally as if having a conversation.
-            When users send text messages, provide clear and helpful responses.
-            You can seamlessly handle both voice and text in the same session.
-            Your responses are concise, friendly, and informative.
-            You are curious, helpful, and have a sense of humor.""",
-        )
+    def __init__(self, initial_instructions: str):
+        initial_ctx = ChatContext()
+        initial_ctx.add_message(role="system", content=initial_instructions)
+        super().__init__(chat_ctx=initial_ctx, instructions=initial_instructions)
+        print(f"Agent initialized with instructions: {initial_instructions}")
 
     @function_tool
     async def get_current_time(self):
@@ -67,13 +64,31 @@ def prewarm(proc: JobProcess):
 
 
 async def entrypoint(ctx: JobContext):
-    # Logging setup
-    # Add any other context you want in all log entries here
-    ctx.log_context_fields = {
-        "room": ctx.room.name,
-    }
+    # Connect to the room first
+    await ctx.connect()
 
-    # Set up a voice AI pipeline with text support using OpenAI, Cartesia, AssemblyAI, and the LiveKit turn detector
+    # Wait for the first (and only) human participant to join
+    human_participant = await ctx.wait_for_participant()
+    
+    # --- KEY STEP: Retrieve the instruction from the participant's metadata ---
+    # This is the data you set in the access token's 'metadata' field
+    participant_instructions = human_participant.metadata
+    
+    if not participant_instructions:
+        # Fallback if the metadata was empty
+        print("Warning: Participant metadata empty. Using generic instructions.")
+        participant_instructions = "You are a helpful assistant."
+        instructions_data = {"agent_instructions": participant_instructions}
+    else:
+        try:
+            instructions_data = json.loads(participant_instructions)
+            participant_instructions = instructions_data.get("agent_instructions", "You are a helpful assistant.")
+            print(f"Loaded participant instructions: {instructions_data.get('prompt_title', 'assistant')}")
+        except json.JSONDecodeError:
+            print(f"Failed to parse participant metadata as JSON, using as plain text: {participant_instructions}")
+            instructions_data = {"agent_instructions": participant_instructions}
+
+    # Create and start the session with the custom instructions
     session = AgentSession(
         # Speech-to-text (STT) is your agent's ears, turning the user's speech into text that the LLM can understand
         # See all available models at https://docs.livekit.io/agents/models/stt/
@@ -95,79 +110,10 @@ async def entrypoint(ctx: JobContext):
         use_tts_aligned_transcript=True,
     )
 
-    # To use a realtime model instead of a voice pipeline, use the following session setup instead.
-    # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
-    # 1. Install livekit-agents[openai]
-    # 2. Set OPENAI_API_KEY in .env.local
-    # 3. Add `from livekit.plugins import openai` to the top of this file
-    # 4. Use the following session setup instead of the version above
-    # session = AgentSession(
-    #     llm=openai.realtime.RealtimeModel(voice="marin")
-    # )
+    agent_instance = Assistant(participant_instructions)
 
-    # Metrics collection, to measure pipeline performance
-    # For more information, see https://docs.livekit.io/agents/build/metrics/
-    usage_collector = metrics.UsageCollector()
-    
-    # Track performance metrics
-    response_start_times = {}
-    response_metrics = []
-
-    @session.on("metrics_collected")
-    def _on_metrics_collected(ev: MetricsCollectedEvent):
-        metrics.log_metrics(ev.metrics)
-        usage_collector.collect(ev.metrics)
-        
-        # Extract detailed metrics for frontend
-        for metric in ev.metrics:
-            if hasattr(metric, 'first_token_time') and metric.first_token_time:
-                response_metrics.append({
-                    'timestamp': metric.timestamp.isoformat() if hasattr(metric, 'timestamp') else '',
-                    'first_token_latency_ms': metric.first_token_time * 1000,
-                    'total_latency_ms': getattr(metric, 'total_time', 0) * 1000,
-                    'tokens_per_second': getattr(metric, 'tokens_per_second', 0),
-                    'error': getattr(metric, 'error', None) is not None
-                })
-                logger.info(f"Response metrics: first_token={metric.first_token_time*1000:.0f}ms, tokens/sec={getattr(metric, 'tokens_per_second', 0):.1f}")
-
-    # Track conversation items for both text and voice interactions
-    @session.on("conversation_item_added")
-    def _on_conversation_item_added(item):
-        """Handle when text input or output is committed to chat history"""
-        logger.info(f"Conversation item added: {item.type} - {getattr(item, 'text', '')[:100]}...")
-        
-        # Track response start time for latency calculation
-        if item.type == "assistant":
-            import time
-            response_start_times[item.id if hasattr(item, 'id') else 'latest'] = time.time()
-        logger.info(f"Conversation item added: {item.type} - {getattr(item, 'text', '')[:100]}...")
-
-    # Log when participants join/leave for debugging
-    @ctx.room.on("participant_connected")
-    def _on_participant_connected(participant):
-        logger.info(f"Participant connected: {participant.identity}")
-
-    @ctx.room.on("participant_disconnected")  
-    def _on_participant_disconnected(participant):
-        logger.info(f"Participant disconnected: {participant.identity}")
-
-    async def log_usage():
-        summary = usage_collector.get_summary()
-        logger.info(f"Usage: {summary}")
-
-    ctx.add_shutdown_callback(log_usage)
-
-    # # Add a virtual avatar to the session, if desired
-    # # For other providers, see https://docs.livekit.io/agents/models/avatar/
-    # avatar = hedra.AvatarSession(
-    #   avatar_id="...",  # See https://docs.livekit.io/agents/models/avatar/plugins/hedra
-    # )
-    # # Start the avatar and wait for it to join
-    # await avatar.start(session, room=ctx.room)
-
-    # Start the session with both text and voice enabled
     await session.start(
-        agent=Assistant(),
+        agent=agent_instance,
         room=ctx.room,
         room_input_options=RoomInputOptions(
             # Enable both audio and text input
@@ -184,11 +130,8 @@ async def entrypoint(ctx: JobContext):
             sync_transcription=True,
         ),
     )
-
-    # Join the room and connect to the user
-    await ctx.connect()
-
-    # Register RPC method after connection is established
+    
+    # Register RPC methods for additional functionality
     @ctx.room.local_participant.register_rpc_method("toggle_communication_mode")
     async def toggle_communication_mode(data: rtc.RpcInvocationData) -> str:
         """Toggle between voice and text communication modes"""
@@ -221,26 +164,10 @@ async def entrypoint(ctx: JobContext):
         try:
             import json
             
-            # Calculate metrics from collected data
-            recent_metrics = response_metrics[-10:] if response_metrics else []
-            
-            if recent_metrics:
-                avg_first_token = sum(m['first_token_latency_ms'] for m in recent_metrics) / len(recent_metrics)
-                avg_tokens_per_sec = sum(m['tokens_per_second'] for m in recent_metrics if m['tokens_per_second'] > 0)
-                avg_tokens_per_sec = avg_tokens_per_sec / len([m for m in recent_metrics if m['tokens_per_second'] > 0]) if avg_tokens_per_sec > 0 else 0
-                error_count = sum(1 for m in recent_metrics if m['error'])
-                error_rate = (error_count / len(recent_metrics)) * 100
-            else:
-                avg_first_token = 0
-                avg_tokens_per_sec = 0
-                error_rate = 0
-            
+            # For now, return basic metrics
             metrics_data = {
-                'avg_first_token_latency_ms': round(avg_first_token, 1),
-                'avg_tokens_per_second': round(avg_tokens_per_sec, 2),
-                'error_rate_percent': round(error_rate, 2),
-                'total_responses': len(response_metrics),
-                'recent_responses': len(recent_metrics),
+                'status': 'active',
+                'instructions_loaded': bool(participant_instructions),
                 'timestamp': __import__('datetime').datetime.now().isoformat()
             }
             
@@ -257,7 +184,7 @@ async def entrypoint(ctx: JobContext):
         try:
             logger.info("Audio test requested")
             # Send a test audio response
-            await session.output.generate_response("This is an audio test. If you can hear this, the agent audio is working correctly.")
+            await session.generate_reply("This is an audio test. If you can hear this, the agent audio is working correctly.")
             return "audio_test_sent"
         except Exception as e:
             logger.error(f"Error in audio test: {e}")

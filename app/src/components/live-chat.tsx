@@ -50,6 +50,9 @@ export function LiveChat({
   // Use TanStack Query for session data
   const { data: sessionsData, refetch: refreshSessions } = useSessions();
   const sessions = sessionsData?.sessions || [];
+  
+  // Get current session data including prompt
+  const currentSession = sessions.find((s: any) => s.id === sessionId);
 
   // Generate unique IDs to prevent React key conflicts
   const generateUniqueId = (prefix: string = 'msg') => {
@@ -490,6 +493,16 @@ export function LiveChat({
         p.identity.includes('Assistant') ||
         p.identity.includes('AI')
       );
+      
+      console.log('LiveKit state update:', {
+        isConnected: livekit.isConnected,
+        participants: livekit.participants.map(p => ({ identity: p.identity, kind: p.kind })),
+        hasAgent,
+        agentPresent,
+        sessionId
+      });
+      
+      // Agent will automatically get instructions via on_enter() lifecycle hook
       setAgentPresent(hasAgent);
       if (hasAgent) {
         setConnectionStatus('online');
@@ -498,7 +511,7 @@ export function LiveChat({
       setConnectionStatus('disconnected');
       setAgentPresent(false);
     }
-  }, [livekit.isConnecting, livekit.isConnected, livekit.participants]);
+  }, [livekit.isConnecting, livekit.isConnected, livekit.participants, agentPresent, sessionId]);
 
   const joinRoom = async () => {
     try {
@@ -507,7 +520,8 @@ export function LiveChat({
       await livekit.connect({
         roomName,
         username,
-        userId
+        userId,
+        sessionId // Pass sessionId for room metadata
       });
       
       setIsJoined(true);
@@ -518,6 +532,7 @@ export function LiveChat({
         timestamp: new Date().toISOString(),
         messageType: 'text'
       }]);
+
     } catch (error) {
       console.error('Failed to join room:', error);
       setConnectionStatus('disconnected');
@@ -525,6 +540,61 @@ export function LiveChat({
         id: generateUniqueId('error'),
         type: 'system',
         content: `Failed to connect: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date().toISOString(),
+        messageType: 'text'
+      }]);
+    }
+  };
+
+  const sendSessionInstructions = async (sessionId: string) => {
+    try {
+      console.log('Starting sendSessionInstructions for sessionId:', sessionId);
+      
+      // Fetch full session data including prompt body
+      const response = await fetch(`/api/sessions/${sessionId}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch session data');
+      }
+      
+      const data = await response.json();
+      const promptBody = data.session?.prompt?.body;
+      
+      console.log('Session data fetched:', {
+        sessionId,
+        promptTitle: data.session?.prompt?.title,
+        promptBody: promptBody?.substring(0, 100) + '...',
+        hasLiveKitRoom: !!livekit.room
+      });
+      
+      if (promptBody && livekit.room) {
+        console.log('Sending RPC call to agent with instructions...');
+        
+        // Send instructions to agent via RPC
+        const result = await livekit.room.localParticipant.performRpc({
+          destinationIdentity: '', // Empty means broadcast to all participants
+          method: 'set_session_instructions',
+          payload: JSON.stringify({ instructions: promptBody })
+        });
+        
+        console.log('RPC call completed with result:', result);
+        console.log('Session instructions sent to agent:', promptBody);
+        
+        setMessages(prev => [...prev, {
+          id: generateUniqueId('system'),
+          type: 'system',
+          content: `🤖 Agent configured with prompt: "${data.session.prompt.title}"`,
+          timestamp: new Date().toISOString(),
+          messageType: 'text'
+        }]);
+      } else {
+        console.warn('Cannot send instructions:', { promptBody: !!promptBody, hasRoom: !!livekit.room });
+      }
+    } catch (error) {
+      console.error('Failed to send session instructions:', error);
+      setMessages(prev => [...prev, {
+        id: generateUniqueId('error'),
+        type: 'system',
+        content: `⚠️ Could not initialize session with prompt: ${error instanceof Error ? error.message : 'Unknown error'}`,
         timestamp: new Date().toISOString(),
         messageType: 'text'
       }]);

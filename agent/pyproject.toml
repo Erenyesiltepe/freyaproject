@@ -14,6 +14,7 @@ dependencies = [
     "livekit-plugins-google~=0.1",  # Add Google AI/Gemini support
     "python-dotenv",
     "av<16.0.0",  # Add this to avoid the problematic version
+    "aiohttp",  # For making HTTP requests to fetch session data
 ]
 
 [dependency-groups]

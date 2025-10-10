@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { getCurrentUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
+import { RoomServiceClient, AgentDispatchClient } from 'livekit-server-sdk';
 
 export async function GET(request: NextRequest) {
   try {
@@ -78,7 +79,61 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    logger.info('Session created', { sessionId: session.id, promptId, userId: user.id });
+    // Create initial instruction message with the prompt content
+    await prisma.message.create({
+      data: {
+        sessionId: session.id,
+        role: 'system',
+        content: `Initial instruction: ${session.prompt.body}`,
+        tokens: null,
+      }
+    });
+
+    // Set room metadata with session instructions
+    try {
+      const apiKey = process.env.LIVEKIT_API_KEY;
+      const apiSecret = process.env.LIVEKIT_API_SECRET;
+      const livekitUrl = process.env.LIVEKIT_URL;
+
+      console.log('LiveKit credentials check:', {
+        hasApiKey: !!apiKey,
+        hasApiSecret: !!apiSecret,
+        hasLivekitUrl: !!livekitUrl,
+        apiKeyPrefix: apiKey?.substring(0, 10) + '...',
+        livekitUrl
+      });
+
+      if (apiKey && apiSecret && livekitUrl) {
+        const roomService = new RoomServiceClient(livekitUrl, apiKey, apiSecret);
+        const roomName = `console-${session.id}`;
+
+        // Create room without metadata - instructions will come from participant metadata
+        try {
+          await roomService.createRoom({
+            name: roomName
+          });
+          console.log('Room created successfully');
+        } catch (createError: any) {
+          console.log('Room might already exist:', createError.message);
+        }
+
+        logger.info('Room created', { sessionId: session.id, roomName });
+      } else {
+        console.error('LiveKit credentials not configured - room not created');
+        logger.warn('LiveKit credentials not configured - room not created');
+      }
+    } catch (error) {
+      console.error('Failed to create room:', error);
+      logger.error('Failed to create room', { sessionId: session.id, error });
+      // Don't fail the session creation if room creation fails
+    }
+
+    logger.info('Session created with initial instruction', { 
+      sessionId: session.id, 
+      promptId, 
+      userId: user.id,
+      promptTitle: session.prompt.title 
+    });
 
     return Response.json({ session });
   } catch (error) {
