@@ -35,7 +35,6 @@ export function LiveChat({
   const [sessionStatus, setSessionStatus] = useState<'active' | 'completed' | 'unknown'>('unknown');
   const [communicationMode, setCommunicationMode] = useState<'text' | 'voice'>('text');
   const [isRecording, setIsRecording] = useState(false);
-  const [agentPresent, setAgentPresent] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'online'>('disconnected');
   const [audioDevices, setAudioDevices] = useState<{ microphones: MediaDeviceInfo[]; speakers: MediaDeviceInfo[] }>({ microphones: [], speakers: [] });
   const [selectedMicrophone, setSelectedMicrophone] = useState<string>('');
@@ -300,6 +299,7 @@ export function LiveChat({
     latencyMs?: number;
   }) => {
     try {
+      console.log('Saving message to database:', messageData);
       const response = await fetch('/api/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -307,10 +307,12 @@ export function LiveChat({
       });
 
       if (response.ok) {
+        console.log('Message saved successfully');
         // Trigger session refresh to update message counts
         refreshSessions();
       } else {
-        console.error('Failed to save message to database');
+        const errorText = await response.text();
+        console.error('Failed to save message to database:', response.status, errorText);
       }
     } catch (error) {
       console.error('Error saving message to database:', error);
@@ -370,7 +372,19 @@ export function LiveChat({
       const isFromAgent = message.metadata?.isAgent || 
                          message.metadata?.participantIdentity?.includes('agent') || 
                          message.metadata?.participantIdentity?.includes('Assistant') ||
+                         // Also check for LiveKit agent patterns
+                         message.metadata?.participantIdentity?.startsWith('AW_') || // Agent Worker IDs
+                         message.metadata?.participantIdentity?.includes('lk-agent') ||
+                         (message.metadata?.participantIdentity && 
+                          message.metadata.participantIdentity !== livekit.room?.localParticipant.identity) || // Any remote participant
                          false;
+
+      console.log('Message analysis:', {
+        content: message.content.substring(0, 100),
+        participantIdentity: message.metadata?.participantIdentity,
+        isAgent: isFromAgent,
+        localParticipantId: livekit.room?.localParticipant.identity
+      });
 
       if (message.type === 'token_stream') {
         // Handle both text messages and transcriptions
@@ -378,7 +392,7 @@ export function LiveChat({
         const isTranscription = message.metadata?.segmentId !== undefined;
         const isFinal = message.metadata?.isFinal !== false; // Default to true for non-transcription messages
         
-        if (content && (isFinal || !isTranscription)) {
+        if (content && (isFinal || !isTranscription || isFromAgent)) {
           // For final transcriptions or regular text messages, process normally
           const messageId = currentStreamingMessage.current || generateUniqueId(isFromAgent ? 'agent' : 'user');
           
@@ -418,9 +432,26 @@ export function LiveChat({
               }];
             }
           });
+          
+          // Save agent messages to database immediately
+          if (isFromAgent && sessionId && content) {
+            const tokens = content.split(/\s+/).filter(token => token.length > 0);
+            saveMessageToDatabase({
+              sessionId,
+              role: 'assistant',
+              content: content,
+              tokens: tokens
+            });
+          }
         }
       } else if (message.type === 'stream_complete') {
         // Mark streaming as complete and save to database
+        console.log('Stream complete received:', {
+          currentStreamingMessage: currentStreamingMessage.current,
+          sessionId,
+          messageMetadata: message.metadata
+        });
+        
         if (currentStreamingMessage.current) {
           const latencyMs = Date.now() - messageStartTime.current;
           
@@ -433,15 +464,14 @@ export function LiveChat({
             
             // Get the completed message to save to database
             const completedMessage = updated.find(m => m.id === currentStreamingMessage.current);
-            if (completedMessage && sessionId && completedMessage.type === 'agent') {
-              saveMessageToDatabase({
-                sessionId,
-                role: 'assistant',
-                content: completedMessage.content,
-                tokens: completedMessage.tokens,
-                latencyMs
-              });
-            }
+            console.log('Completed message:', {
+              found: !!completedMessage,
+              type: completedMessage?.type,
+              content: completedMessage?.content?.substring(0, 100)
+            });
+            
+            // Note: Agent messages are now saved immediately when received
+            // User messages were already saved when sent
             
             return updated;
           });
@@ -486,32 +516,18 @@ export function LiveChat({
     if (livekit.isConnecting) {
       setConnectionStatus('connecting');
     } else if (livekit.isConnected) {
-      setConnectionStatus('connected');
-      // Check if agent is present
-      const hasAgent = livekit.participants.some(p => 
-        p.identity.includes('agent') || 
-        p.identity.includes('Assistant') ||
-        p.identity.includes('AI')
-      );
+      // Agent always joins before user, so we can go directly to online
+      setConnectionStatus('online');
       
       console.log('LiveKit state update:', {
         isConnected: livekit.isConnected,
         participants: livekit.participants.map(p => ({ identity: p.identity, kind: p.kind })),
-        hasAgent,
-        agentPresent,
         sessionId
       });
-      
-      // Agent will automatically get instructions via on_enter() lifecycle hook
-      setAgentPresent(hasAgent);
-      if (hasAgent) {
-        setConnectionStatus('online');
-      }
     } else {
       setConnectionStatus('disconnected');
-      setAgentPresent(false);
     }
-  }, [livekit.isConnecting, livekit.isConnected, livekit.participants, agentPresent, sessionId]);
+  }, [livekit.isConnecting, livekit.isConnected, livekit.participants, sessionId]);
 
   const joinRoom = async () => {
     try {
@@ -606,7 +622,6 @@ export function LiveChat({
       await livekit.disconnect();
       setIsJoined(false);
       setConnectionStatus('disconnected');
-      setAgentPresent(false);
       setMessages(prev => [...prev, {
         id: generateUniqueId('system'),
         type: 'system',
@@ -822,9 +837,8 @@ export function LiveChat({
       case 'connecting':
         return 'Connecting...';
       case 'connected':
-        return agentPresent ? 'Online (Agent Ready)' : 'Connected (Waiting for Agent)';
       case 'online':
-        return 'Online (Agent Ready)';
+        return 'Online';
       case 'disconnected':
       default:
         if (livekit.error) return `Error: ${livekit.error}`;
@@ -837,7 +851,6 @@ export function LiveChat({
       case 'connecting':
         return 'text-yellow-400';
       case 'connected':
-        return agentPresent ? 'text-green-400' : 'text-blue-400';
       case 'online':
         return 'text-green-400';
       case 'disconnected':
@@ -865,17 +878,6 @@ export function LiveChat({
                   : 'bg-gray-800 text-gray-300 border border-gray-600'
               }`}>
                 {sessionStatus === 'active' ? 'Active Session' : 'Completed Session'}
-              </span>
-            )}
-            
-            {/* Agent Presence Indicator */}
-            {isJoined && (
-              <span className={`text-xs px-2 py-1 rounded-full font-medium ${
-                agentPresent 
-                  ? 'bg-blue-900 text-blue-300 border border-blue-700' 
-                  : 'bg-orange-900 text-orange-300 border border-orange-700'
-              }`}>
-                {agentPresent ? '🤖 Agent Ready' : '⏳ Waiting for Agent'}
               </span>
             )}
             
