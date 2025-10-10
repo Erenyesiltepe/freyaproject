@@ -14,8 +14,7 @@ export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSes
   const { 
     data: sessionsData, 
     isLoading: loading, 
-    error,
-    refetch: refreshSessions 
+    error
   } = useSessions();
   
   const sessions = sessionsData?.sessions || [];
@@ -56,13 +55,10 @@ export function RecentSessions({ onSelectSession, selectedSessionId }: RecentSes
 
   return (
     <div className="w-full max-w-md">
-      <div className="flex justify-between items-center mb-4">
+      <div className="mb-4">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
           Recent Sessions
         </h3>
-        <Button variant="outline" size="sm" onClick={() => refreshSessions()} disabled={loading}>
-          {loading ? 'Loading...' : 'Refresh'}
-        </Button>
       </div>
 
       {error && (

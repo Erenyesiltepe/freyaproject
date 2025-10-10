@@ -356,11 +356,24 @@ export function LiveChat({
   // Load messages when component mounts with sessionId
   useEffect(() => {
     if (sessionId) {
+      // Clear existing messages when switching sessions
+      setMessages([]);
       loadMessagesFromDatabase();
       // Update session status from context
       setSessionStatus(sessionId && isSessionActive(sessionId, sessions) ? 'active' : 'completed');
+    } else {
+      // Clear messages when no session is selected
+      setMessages([]);
+      setSessionStatus('unknown');
     }
-  }, [sessionId, isSessionActive]);
+  }, [sessionId, sessions]); // Changed dependency from isSessionActive to sessions
+
+  // Update session status when sessions data changes (e.g., when a new session is created)
+  useEffect(() => {
+    if (sessionId && sessions.length > 0) {
+      setSessionStatus(isSessionActive(sessionId, sessions) ? 'active' : 'completed');
+    }
+  }, [sessions, sessionId]);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = useCallback(() => {
