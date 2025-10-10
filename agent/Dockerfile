@@ -24,11 +24,13 @@ RUN adduser \
 # Install build dependencies required for Python packages with native extensions
 # gcc: C compiler needed for building Python packages with C extensions
 # python3-dev: Python development headers needed for compilation
+# curl: for health checks
 # We clean up the apt cache after installation to keep the image size down
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     python3-dev \
+    curl \
   && rm -rf /var/lib/apt/lists/*
 
 # Create a new directory for our application code
@@ -62,6 +64,9 @@ USER appuser
 # This ensures the container is ready to run immediately without downloading
 # dependencies at runtime, which improves startup time and reliability
 RUN uv run src/agent.py download-files
+
+# Expose health check port
+EXPOSE 4001
 
 # Run the application using UV
 # UV will activate the virtual environment and run the agent.

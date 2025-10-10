@@ -1,39 +1,37 @@
-# syntax=docker/dockerfile:1.7
+# Simple single-stage Dockerfile for production
+FROM node:20-alpine
 
-FROM node:20-alpine AS base
-ENV NODE_ENV=production
-WORKDIR /app
-
-# ---- Install dependencies (uses pnpm via Corepack) ----
-FROM base AS deps
-RUN corepack enable
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-
-# ---- Build application ----
-FROM deps AS builder
-ENV NODE_ENV=production
-COPY . .
-RUN pnpm build
-
-# ---- Production image ----
-FROM node:20-alpine AS runner
+# Set environment variables
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV DATABASE_URL=file:./prisma/dev.db
+
+# Set working directory
 WORKDIR /app
+
+# Enable pnpm via Corepack
 RUN corepack enable
 
-# Install only production dependencies
+# Copy package files
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile --prod
 
-# Copy built assets and necessary files
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/next.config.ts ./
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/node_modules/.pnpm/.modules.yaml ./node_modules/.pnpm/.modules.yaml || true
+# Install all dependencies
+RUN pnpm install --frozen-lockfile
 
+# Copy the entire project
+COPY . .
+
+# Clean and recreate the database
+RUN rm -f prisma/dev.db && npx prisma db push
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# Build the application
+RUN pnpm build
+
+# Expose port
 EXPOSE 3000
 
+# Start the production server
 CMD ["pnpm", "start"]

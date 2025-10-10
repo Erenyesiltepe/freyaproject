@@ -65,9 +65,10 @@ export async function getCurrentUser() {
 
 export async function setAuthCookie(token: string) {
   const cookieStore = cookies();
+  
   (await cookieStore).set(DEV_TOKEN_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: false, // Disabled for local development (even in production build)
     sameSite: 'lax',
     maxAge: 60 * 60 * 24 * 7, // 7 days
     path: '/', // Ensure cookie is available across the whole app

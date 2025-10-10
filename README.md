@@ -41,8 +41,36 @@ This platform consists of three main components:
 - **Docker Desktop** for LiveKit server
 - **Environment Variables** (see Configuration section)
 
-### 1. Launch LiveKit Server
+### 1. Environment Setup
 
+```bash
+# Copy environment template
+cp .env.example .env
+
+# Edit .env with your API keys
+# Required: LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL
+# Required: OPENAI_API_KEY or GOOGLE_API_KEY
+```
+
+### 2. Launch Full Stack with Docker
+
+```bash
+# Start all services (Next.js app, Python agent, database)
+docker compose up --build
+
+# Or run in background
+docker compose up -d --build
+```
+
+The application will be available at:
+- **Frontend**: http://localhost:3000
+- **Agent Health**: http://localhost:4001/health
+
+### 3. Alternative: Development Setup
+
+If you prefer to run services individually for development:
+
+#### Start LiveKit Server (if using self-hosted)
 ```powershell
 # Using Docker Compose (recommended)
 docker compose up livekit
@@ -58,15 +86,15 @@ docker run --rm -it \
   --config /livekit.yaml
 ```
 
-### 2. Start the Python Agent
+#### Start the Python Agent
 
 ```powershell
-cd agent-starter-python
+cd agent
 uv sync  # Install dependencies
-uv run python src/agent.py dev  # Start in development mode
+uv run python src/agent.py start  # Start in production mode
 ```
 
-### 3. Launch the Next.js Frontend
+#### Launch the Next.js Frontend
 
 ```powershell
 cd app
@@ -120,13 +148,15 @@ freyaproject/
 │   ├── jest.config.js            # Jest testing configuration
 │   ├── jest.setup.js             # Jest environment setup
 │   └── package.json              # Frontend dependencies
-├── agent-starter-python/         # Python LiveKit Agent
+├── agent/                        # Python LiveKit Agent
 │   ├── src/
-│   │   └── agent.py              # Main agent implementation
+│   │   └── agent.py              # Main agent implementation with health endpoint
 │   ├── pyproject.toml            # Python dependencies
-│   └── uv.lock                   # Dependency lock file
-├── docker-compose.yml            # Container orchestration
-├── livekit.yaml                  # LiveKit server configuration
+│   ├── uv.lock                   # Dependency lock file
+│   ├── .env.example              # Environment template
+│   └── Dockerfile                # Docker build configuration
+├── docker-compose.yml            # Full stack orchestration
+├── .env.example                  # Environment variables template
 └── README.md                     # This file
 ```
 
@@ -191,6 +221,28 @@ The platform includes comprehensive test coverage across:
 - **Business Logic**: Session management, LiveKit integration, prompt handling
 - **UI Components**: User interactions, state management, rendering
 - **Security**: Cookie handling, environment-specific configurations
+
+## 🐳 Docker Setup
+
+### **Service Architecture**
+- **app**: Next.js frontend with API routes, database, and health checks
+- **agent**: Python LiveKit agent with health endpoint and RPC methods
+- **db**: SQLite database persistence layer
+
+### **Health Checks**
+All services include health checks for reliable deployments:
+- **Frontend**: `/api/health` endpoint returns service status
+- **Agent**: `/health` endpoint on port 4001 for container health
+- **Database**: File existence check for SQLite database
+
+### **Volumes**
+- **app_data**: Persistent storage for uploads and cache
+- **db_data**: SQLite database persistence across container restarts
+
+### **Networking**
+Services communicate internally using Docker networks. External access:
+- Frontend: http://localhost:3000
+- Agent Health: http://localhost:4001/health
 
 ## 🎯 Design Decisions
 
@@ -320,34 +372,56 @@ pnpm test -- src/__tests__/api/auth.test.ts
 
 ### **Common Issues**
 
-#### **LiveKit Connection Errors**
+#### **Docker Compose Issues**
 ```bash
-# Verify LiveKit server is running
-curl http://localhost:7880/rtc/validate
+# Check service status
+docker compose ps
 
-# Check port availability
-netstat -an | findstr 7880
+# View service logs
+docker compose logs app
+docker compose logs agent
+docker compose logs db
+
+# Restart specific service
+docker compose restart app
+
+# Rebuild and restart all services
+docker compose up --build --force-recreate
+```
+
+#### **Environment Configuration**
+```bash
+# Validate environment variables
+docker compose exec app printenv | grep LIVEKIT
+docker compose exec agent printenv | grep LIVEKIT
+
+# Check if .env file is properly loaded
+docker compose exec app cat .env
 ```
 
 #### **Agent Connection Issues**
 ```bash
-# Verify environment variables
-uv run python -c "import os; print(os.getenv('LIVEKIT_URL'))"
+# Check agent health endpoint
+curl http://localhost:4001/health
 
-# Test agent connectivity
-uv run python src/agent.py --validate-connection
+# View agent logs
+docker compose logs agent
+
+# Test LiveKit connection from agent
+docker compose exec agent python -c "import os; print('LIVEKIT_URL:', os.getenv('LIVEKIT_URL'))"
 ```
 
 #### **Frontend Build Errors**
 ```bash
-# Clear Next.js cache
-pnpm clean
+# Clear Next.js cache and rebuild
+docker compose exec app rm -rf .next
+docker compose restart app
 
-# Regenerate Prisma client
-pnpm prisma generate
+# Check frontend logs
+docker compose logs app
 
 # Reset database
-pnpm prisma db push --force-reset
+docker compose exec app npx prisma db push --force-reset
 ```
 
 ### **Performance Optimization**

@@ -1,24 +1,33 @@
 services:
-  next:
-    build: ./app
-    ports: ["3000:3000"]
-    env_file: .env
-    depends_on:
-      - livekit
-    
-  agent:
-    build: ./agent
-    ports: ["4001:4001"]
-    env_file: .env
-    depends_on: [livekit]
-    environment:
-      - LIVEKIT_URL=ws://livekit:7880
-      - HEALTH_PORT=4001
-    restart: unless-stopped
+  # Next.js Frontend Application
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./app/prisma:/app/prisma
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4001/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 30s
+    restart: unless-stopped
+
+  # Python AI Agent
+  agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    ports:
+      - "4001:4001"
+    env_file:
+      - .env
+    environment:
+      - HEALTH_PORT=4001
+    restart: unless-stopped
       
