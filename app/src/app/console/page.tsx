@@ -6,7 +6,7 @@ import { PromptLibrary } from '@/components/prompt-library';
 import { RecentSessions } from '@/components/recent-sessions';
 import { LiveChat } from '@/components/live-chat';
 import { Metrics } from '@/components/metrics';
-import { useAuth, useLogout, useCreateSession } from '@/lib/queries';
+import { useAuth, useLogout, useCreateSession, useSessions, type Session } from '@/lib/queries';
 
 export default function ConsolePage() {
   const router = useRouter();
@@ -14,10 +14,12 @@ export default function ConsolePage() {
   
   // Use TanStack Query hooks
   const { data: authData, isLoading: authLoading, error: authError } = useAuth();
+  const { data: sessionsData } = useSessions();
   const logoutMutation = useLogout();
   const createSessionMutation = useCreateSession();
   
   const user = authData?.user;
+  const sessions = sessionsData?.sessions || [];
 
   const handleStartSession = async (promptId: string) => {
     try {
@@ -41,6 +43,38 @@ export default function ConsolePage() {
       console.error('Logout error:', error);
     }
   };
+
+  // Keyboard shortcuts for session switching (Command-K / Ctrl-K)
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Check for Command-K (Mac) or Ctrl-K (Windows/Linux)
+      if ((event.metaKey || event.ctrlKey) && event.key === 'k') {
+        event.preventDefault(); // Prevent default browser behavior
+        
+        if (sessions.length > 0) {
+          const currentIndex = selectedSessionId 
+            ? sessions.findIndex((s: Session) => s.id === selectedSessionId)
+            : -1;
+          
+          // Cycle to next session, or first session if none selected
+          const nextIndex = currentIndex >= sessions.length - 1 ? 0 : currentIndex + 1;
+          const nextSession = sessions[nextIndex];
+          
+          if (nextSession) {
+            setSelectedSessionId(nextSession.id);
+          }
+        }
+      }
+    };
+
+    // Add event listener
+    document.addEventListener('keydown', handleKeyDown);
+    
+    // Cleanup
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [sessions, selectedSessionId]);
 
   // Handle authentication errors
   if (authError) {

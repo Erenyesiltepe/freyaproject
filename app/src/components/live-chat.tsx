@@ -40,6 +40,14 @@ export function LiveChat({
   const [selectedMicrophone, setSelectedMicrophone] = useState<string>('');
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>('');
   const [showDeviceSettings, setShowDeviceSettings] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
+  const [toasts, setToasts] = useState<Array<{
+    id: string;
+    type: 'success' | 'error' | 'warning' | 'info';
+    message: string;
+    duration?: number;
+  }>>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const currentStreamingMessage = useRef<string | null>(null);
   const messageStartTime = useRef<number>(0);
@@ -528,6 +536,54 @@ export function LiveChat({
       setConnectionStatus('disconnected');
     }
   }, [livekit.isConnecting, livekit.isConnected, livekit.participants, sessionId]);
+
+  // Toast management functions
+  const addToast = (toast: Omit<typeof toasts[0], 'id'>) => {
+    const id = generateUniqueId('toast');
+    setToasts(prev => [...prev, { ...toast, id }]);
+    setTimeout(() => removeToast(id), toast.duration || 5000);
+  };
+
+  const removeToast = (id: string) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  // Add toast notifications for connection errors
+  useEffect(() => {
+    if (livekit.error) {
+      addToast({
+        type: 'error',
+        message: `Connection failed: ${livekit.error}. Retrying...`,
+        duration: 7000
+      });
+    }
+  }, [livekit.error]);
+
+  // Add reconnect success toast
+  useEffect(() => {
+    if (connectionStatus === 'online' && !livekit.error) {
+      addToast({
+        type: 'success',
+        message: 'Successfully reconnected!',
+        duration: 3000
+      });
+    }
+  }, [connectionStatus, livekit.error]);
+
+  // Auto-scroll logic with hover pause
+  useEffect(() => {
+    if (shouldAutoScroll && !isHovered) {
+      scrollToBottom();
+    }
+  }, [messages, shouldAutoScroll, isHovered]);
+
+  // Handle hover events for auto-scroll pause
+  const handleMouseEnter = () => setIsHovered(true);
+  const handleMouseLeave = () => {
+    setIsHovered(false);
+    // Resume auto-scroll after leaving hover
+    setTimeout(() => setShouldAutoScroll(true), 100);
+  };
 
   const joinRoom = async () => {
     try {
@@ -1031,7 +1087,11 @@ export function LiveChat({
 
       <CardContent className="flex-1 flex flex-col gap-3 p-4 overflow-hidden bg-gray-900">
         {/* Messages - Phase 5: Unified Chat Log with chronological sorting */}
-        <div className="flex-1 overflow-y-auto space-y-3 p-3 border border-gray-700 rounded-lg bg-gray-800">
+        <div 
+          className="flex-1 overflow-y-auto space-y-3 p-3 border border-gray-700 rounded-lg bg-gray-800"
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
           {sortedMessages.map((message) => (
             <div
               key={message.id}
@@ -1172,6 +1232,42 @@ export function LiveChat({
           )}
         </div>
       </CardContent>
+
+      {/* Toast Notifications */}
+      {toasts.length > 0 && (
+        <div className="absolute top-4 right-4 space-y-2 z-50">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`p-3 rounded-lg shadow-lg border max-w-sm animate-in slide-in-from-right-2 ${
+                toast.type === 'error'
+                  ? 'bg-red-900 border-red-700 text-red-100'
+                  : toast.type === 'success'
+                  ? 'bg-green-900 border-green-700 text-green-100'
+                  : 'bg-blue-900 border-blue-700 text-blue-100'
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex items-start gap-2">
+                  <span className="text-lg">
+                    {toast.type === 'error' ? '❌' : toast.type === 'success' ? '✅' : 'ℹ️'}
+                  </span>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">{toast.message}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => removeToast(toast.id)}
+                  className="text-gray-400 hover:text-gray-200 ml-2 text-lg leading-none"
+                  title="Dismiss"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 }

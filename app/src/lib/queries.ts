@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 // Types
-interface Session {
+export interface Session {
   id: string;
   promptId: string;
   startedAt: string;
@@ -14,6 +14,7 @@ interface Session {
     messages: number;
   };
 }
+
 
 // Utility functions for session management
 export function isSessionActive(sessionId: string, sessions: Session[]): boolean {
