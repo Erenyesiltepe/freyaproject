@@ -213,7 +213,7 @@ export function useCreatePrompt() {
 }
 
 // Metrics queries
-export function useMetrics(hours: number = 24) {
+export function useMetrics(hours: number = 24, refetchIntervalMs: number = 120000) { // Default 2 minutes
   return useQuery({
     queryKey: queryKeys.metrics(hours),
     queryFn: async () => {
@@ -225,7 +225,7 @@ export function useMetrics(hours: number = 24) {
     },
     staleTime: 1000 * 30, // 30 seconds
     gcTime: 1000 * 60 * 5, // 5 minutes
-    refetchInterval: 1000 * 10, // Auto-refetch every 10 seconds
+    refetchInterval: refetchIntervalMs, // Configurable auto-refetch interval
     refetchIntervalInBackground: false, // Don't refetch when tab is not active
   });
 }

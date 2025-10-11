@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { prisma } from '@/lib/prisma';
+import { getCurrentUser } from '@/lib/auth';
+import { logger } from '@/lib/logger';
 
 interface LogEntry {
   id: string;
@@ -21,12 +21,42 @@ interface MetricsData {
   recentLogs: LogEntry[];
 }
 
+export async function POST(request: NextRequest) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return Response.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const { sessionId, livekitData } = body;
+
+    // Handle LiveKit metrics data if provided (no longer stored in database)
+    if (livekitData && typeof livekitData === 'object') {
+      logger.info('LiveKit metrics received (not stored)', { 
+        sessionId,
+        firstTokenLatency: livekitData.avg_first_token_latency_ms,
+        tokensPerSecond: livekitData.avg_tokens_per_second,
+        errorRate: livekitData.error_rate_24h_percent
+      });
+
+      return Response.json({ 
+        success: true, 
+        message: 'Metrics received (not stored)',
+        livekitData: livekitData 
+      });
+    }
+
+    return Response.json({ error: 'No LiveKit data provided' }, { status: 400 });
+
+  } catch (error) {
+    logger.error('Failed to process metrics', { error });
+    return Response.json({ error: 'Failed to process metrics' }, { status: 500 });
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
-    // For now, skip authentication check - you can add it back later with proper JWT setup
-    // const cookieStore = await cookies();
-    // const token = cookieStore.get('auth-token');
-
     // Get query parameters for time range
     const { searchParams } = new URL(request.url);
     const hoursBack = parseInt(searchParams.get('hours') || '24');
@@ -34,106 +64,41 @@ export async function GET(request: NextRequest) {
     const endTime = new Date();
     const startTime = new Date(endTime.getTime() - (hoursBack * 60 * 60 * 1000));
 
-    // Query messages from the last specified hours
-    const messages = await prisma.message.findMany({
-      where: {
-        timestamp: {
-          gte: startTime,
-          lte: endTime,
-        },
-        role: 'assistant', // Only look at agent responses
-      },
-      select: {
-        id: true,
-        timestamp: true,
-        latencyMs: true,
-        tokens: true,
-        content: true,
-        session: {
-          select: {
-            id: true,
-          }
-        }
-      },
-      orderBy: {
-        timestamp: 'desc',
-      },
-    });
-
-    // Query errors from the same period (you might need to add an errors table)
-    // For now, we'll count messages with high latency or missing data as errors
-    const errorMessages = messages.filter((msg: any) => 
-      !msg.latencyMs || 
-      msg.latencyMs > 30000 || // More than 30 seconds considered an error
-      !msg.tokens
-    );
-
-    // Calculate metrics
-    const validMessages = messages.filter((msg: any) => 
-      msg.latencyMs && 
-      msg.latencyMs <= 30000 && 
-      msg.tokens
-    );
-
-    let avgFirstTokenLatency = 0;
-    let avgTokensPerSecond = 0;
-    
-    if (validMessages.length > 0) {
-      // Calculate average first token latency (assuming first token comes quickly)
-      const firstTokenLatencies = validMessages
-        .filter((msg: any) => msg.latencyMs)
-        .map((msg: any) => Math.min(msg.latencyMs! / 4, 5000)); // Estimate first token at 1/4 of total latency, max 5s
-      
-      avgFirstTokenLatency = firstTokenLatencies.reduce((sum: number, lat: number) => sum + lat, 0) / firstTokenLatencies.length;
-
-      // Calculate average tokens per second
-      const tokenRates = validMessages
-        .filter((msg: any) => msg.latencyMs && msg.tokens)
-        .map((msg: any) => {
-          const tokens = JSON.parse(msg.tokens || '[]');
-          const tokensCount = Array.isArray(tokens) ? tokens.length : (typeof tokens === 'string' ? tokens.split(' ').length : 50);
-          const timeInSeconds = (msg.latencyMs! / 1000);
-          return timeInSeconds > 0 ? tokensCount / timeInSeconds : 0;
-        })
-        .filter((rate: number) => rate > 0 && rate < 1000); // Filter out unrealistic rates
-
-      avgTokensPerSecond = tokenRates.length > 0 
-        ? tokenRates.reduce((sum: number, rate: number) => sum + rate, 0) / tokenRates.length 
-        : 0;
-    }
-
-    const errorRate = messages.length > 0 
-      ? (errorMessages.length / messages.length) * 100 
-      : 0;
-
-    // Create log entries from actual database messages only
-    const recentLogs: LogEntry[] = messages.slice(0, 20).map((msg: any, index: number) => ({
-      id: `msg-${msg.id}`,
-      timestamp: msg.timestamp,
-      level: (msg.latencyMs && msg.latencyMs > 10000) ? 'warn' as const : 
-             (!msg.latencyMs || !msg.tokens) ? 'error' as const : 'info' as const,
-      message: `Response: ${msg.content ? msg.content.substring(0, 80) : 'No content'}${msg.content && msg.content.length > 80 ? '...' : ''} ${msg.latencyMs ? `(${msg.latencyMs}ms)` : ''}`,
-      component: 'agent'
-    }));
-
+    // Since metrics are now handled directly by the agent and not stored in database,
+    // return placeholder data. Real metrics are available through the live-chat component via RPC.
     const metricsData: MetricsData = {
-      avgFirstTokenLatency: Math.round(avgFirstTokenLatency),
-      avgTokensPerSecond: Math.round(avgTokensPerSecond * 100) / 100, // Round to 2 decimal places
-      errorRate: Math.round(errorRate * 100) / 100, // Round to 2 decimal places
-      totalMessages: messages.length,
-      totalErrors: errorMessages.length,
+      avgFirstTokenLatency: 0, // Placeholder - real metrics come from agent RPC
+      avgTokensPerSecond: 0,   // Placeholder - real metrics come from agent RPC
+      errorRate: 0,            // Placeholder - real metrics come from agent RPC
+      totalMessages: 0,
+      totalErrors: 0,
       periodStart: startTime.toISOString(),
       periodEnd: endTime.toISOString(),
-      recentLogs: recentLogs,
+      recentLogs: [{
+        id: 'system-info',
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        message: 'Metrics are now collected directly from the LiveKit agent. Connect to a room in the chat interface to see real-time metrics.',
+        component: 'system'
+      }],
     };
+
+    logger.info('Metrics requested - returning placeholder data (real metrics available via agent RPC)', { hoursBack });
 
     return NextResponse.json({
       success: true,
       metrics: metricsData,
+      note: 'Metrics are now handled directly by the LiveKit agent. Use the chat interface to view real-time agent performance.',
+      rawMetricsCount: {
+        firstTokenLatencies: 0,
+        tokenRates: 0,
+        errorRates: 0,
+        totalMetrics: 0
+      }
     });
 
   } catch (error) {
-    console.error('Error fetching metrics:', error);
+    logger.error('Error fetching metrics:', { error });
     return NextResponse.json(
       { error: 'Failed to fetch metrics' },
       { status: 500 }

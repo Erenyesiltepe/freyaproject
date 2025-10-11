@@ -50,6 +50,7 @@ model Session {
   prompt    Prompt    @relation(fields: [promptId], references: [id], onDelete: Cascade)
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages  Message[]
+  metrics   Metric[]
 
   @@map("sessions")
 }
@@ -66,4 +67,17 @@ model Message {
   session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@map("messages")
+}
+
+model Metric {
+  id        String   @id @default(cuid())
+  sessionId String?
+  type      String   // 'first_token_latency', 'tokens_per_second', 'error_rate', 'agent_status'
+  value     Float
+  timestamp DateTime @default(now())
+  metadata  String?  // JSON string for additional metric data
+  
+  session   Session? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("metrics")
 }

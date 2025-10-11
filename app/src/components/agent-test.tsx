@@ -93,13 +93,14 @@ export default function AgentTest() {
         }
       });
 
-      // Get connection token
-      const response = await fetch('/api/livekit-token', {
+      // Get connection token using the advanced endpoint with session support
+      const response = await fetch('/api/livekit/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          room: 'agent-test-room',
-          username: `tester-${Date.now()}`
+          roomName: 'agent-test-room',
+          identity: `tester-${Date.now()}`,
+          sessionId: null // No session context needed for testing
         })
       });
 
@@ -107,10 +108,11 @@ export default function AgentTest() {
         throw new Error(`Failed to get token: ${response.statusText}`);
       }
 
-      const { token, url } = await response.json();
+      const { token } = await response.json();
+      const livekitUrl = process.env.NEXT_PUBLIC_LIVEKIT_URL || 'ws://localhost:7880';
       
       // Connect to room
-      await newRoom.connect(url, token);
+      await newRoom.connect(livekitUrl, token);
       setRoom(newRoom);
       
     } catch (error) {

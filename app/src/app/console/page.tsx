@@ -21,6 +21,9 @@ export default function ConsolePage() {
   const user = authData?.user;
   const sessions = sessionsData?.sessions || [];
 
+  const [livekitRoom, setLivekitRoom] = useState<any>(null);
+  const [livekitConnected, setLivekitConnected] = useState(false);
+
   const handleStartSession = async (promptId: string) => {
     try {
       const result = await createSessionMutation.mutateAsync(promptId);
@@ -136,6 +139,10 @@ export default function ConsolePage() {
               userId={user?.id}
               username={user?.email || 'Guest'}
               roomName={`console-${selectedSessionId || 'default'}`}
+              onLiveKitStateChange={(room, isConnected) => {
+                setLivekitRoom(room);
+                setLivekitConnected(isConnected);
+              }}
             />
           </div>
 
@@ -146,6 +153,8 @@ export default function ConsolePage() {
             <Metrics 
               sessionId={selectedSessionId || undefined}
               refreshInterval={10000}
+              livekitRoom={livekitRoom}
+              isConnected={livekitConnected}
             />
           </div>
         </div>

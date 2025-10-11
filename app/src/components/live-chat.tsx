@@ -11,6 +11,7 @@ interface LiveChatProps {
   userId?: string;
   username?: string;
   roomName?: string;
+  onLiveKitStateChange?: (room: any, isConnected: boolean) => void; // Callback to expose livekit state
 }
 
 interface ChatMessage {
@@ -27,7 +28,8 @@ export function LiveChat({
   sessionId, 
   userId = 'user-' + Math.random().toString(36).substr(2, 9),
   username = 'User',
-  roomName = 'agent-console-room'
+  roomName = 'agent-console-room',
+  onLiveKitStateChange
 }: LiveChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -54,12 +56,22 @@ export function LiveChat({
 
   const livekit = useLiveKit();
   
+  // Expose livekit state to parent component
+  useEffect(() => {
+    if (onLiveKitStateChange) {
+      onLiveKitStateChange(livekit.room, livekit.isConnected);
+    }
+  }, [livekit.room, livekit.isConnected, onLiveKitStateChange]);
+  
   // Use TanStack Query for session data
   const { data: sessionsData, refetch: refreshSessions } = useSessions();
-  const sessions = sessionsData?.sessions || [];
+  const sessions = useMemo(() => sessionsData?.sessions || [], [sessionsData?.sessions]);
   
   // Get current session data including prompt
-  const currentSession = sessions.find((s: any) => s.id === sessionId);
+  const currentSession = useMemo(() => 
+    sessions.find((s: any) => s.id === sessionId), 
+    [sessions, sessionId]
+  );
 
   // Generate unique IDs to prevent React key conflicts
   const generateUniqueId = (prefix: string = 'msg') => {
@@ -246,57 +258,6 @@ export function LiveChat({
       }]);
     }
   }, [selectedMicrophone, audioDevices.microphones]);
-
-  // Test agent audio output
-  const testAgentAudio = useCallback(async () => {
-    if (!livekit.isConnected) {
-      setMessages(prev => [...prev, {
-        id: generateUniqueId('error'),
-        type: 'system',
-        content: '❌ Not connected to room. Join the room first.',
-        timestamp: new Date().toISOString(),
-        messageType: 'text'
-      }]);
-      return;
-    }
-
-    try {
-      setMessages(prev => [...prev, {
-        id: generateUniqueId('system'),
-        type: 'system',
-        content: '🔊 Testing agent audio output...',
-        timestamp: new Date().toISOString(),
-        messageType: 'text'
-      }]);
-
-      // Call the test audio RPC method
-      const result = await livekit.room?.localParticipant.performRpc({
-        destinationIdentity: '', // Empty means broadcast to all participants
-        method: 'test_audio_output',
-        payload: 'test'
-      });
-
-      console.log('Audio test result:', result);
-      
-      setMessages(prev => [...prev, {
-        id: generateUniqueId('system'),
-        type: 'system',
-        content: '✅ Audio test command sent. You should hear the agent speaking if audio is working properly.',
-        timestamp: new Date().toISOString(),
-        messageType: 'text'
-      }]);
-
-    } catch (error) {
-      console.error('Agent audio test failed:', error);
-      setMessages(prev => [...prev, {
-        id: generateUniqueId('error'),
-        type: 'system',
-        content: `❌ Agent audio test failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        timestamp: new Date().toISOString(),
-        messageType: 'text'
-      }]);
-    }
-  }, [livekit.isConnected, livekit.room]);
   
   // Function to save messages to database
   const saveMessageToDatabase = async (messageData: {
@@ -328,7 +289,7 @@ export function LiveChat({
   };
 
   // Function to load existing messages from database
-  const loadMessagesFromDatabase = async () => {
+  const loadMessagesFromDatabase = useCallback(async () => {
     if (!sessionId) return;
     
     try {
@@ -351,7 +312,7 @@ export function LiveChat({
     } catch (error) {
       console.error('Error loading messages from database:', error);
     }
-  };
+  }, [sessionId]); // Only depend on sessionId
 
   // Load messages when component mounts with sessionId
   useEffect(() => {
@@ -359,21 +320,23 @@ export function LiveChat({
       // Clear existing messages when switching sessions
       setMessages([]);
       loadMessagesFromDatabase();
-      // Update session status from context
-      setSessionStatus(sessionId && isSessionActive(sessionId, sessions) ? 'active' : 'completed');
     } else {
       // Clear messages when no session is selected
       setMessages([]);
       setSessionStatus('unknown');
     }
-  }, [sessionId, sessions]); // Changed dependency from isSessionActive to sessions
+  }, [sessionId, loadMessagesFromDatabase]); // Include memoized function as dependency
 
-  // Update session status when sessions data changes (e.g., when a new session is created)
+  // Update session status when sessions data changes or sessionId changes
   useEffect(() => {
-    if (sessionId && sessions.length > 0) {
-      setSessionStatus(isSessionActive(sessionId, sessions) ? 'active' : 'completed');
+    if (sessionId) {
+      // Use currentSession which is already memoized instead of calling isSessionActive
+      const sessionActive = currentSession && (!currentSession.endedAt || new Date(currentSession.endedAt) > new Date());
+      setSessionStatus(sessionActive ? 'active' : 'completed');
+    } else {
+      setSessionStatus('unknown');
     }
-  }, [sessions, sessionId]);
+  }, [sessionId, currentSession]); // Use memoized currentSession instead of sessions
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = useCallback(() => {

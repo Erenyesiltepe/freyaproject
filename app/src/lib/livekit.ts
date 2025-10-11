@@ -135,7 +135,11 @@ export function useLiveKit() {
       });
 
       room.on(RoomEvent.ParticipantConnected, (participant) => {
-        console.log('Participant connected:', participant.identity);
+        console.log('Participant connected:', {
+          identity: participant.identity,
+          sid: participant.sid,
+          isAgent: participant.identity.includes('agent') || participant.identity.includes('Assistant')
+        });
         setState(prev => ({
           ...prev,
           participants: [...prev.participants, participant],
@@ -143,7 +147,10 @@ export function useLiveKit() {
       });
 
       room.on(RoomEvent.ParticipantDisconnected, (participant) => {
-        console.log('Participant disconnected:', participant.identity);
+        console.log('Participant disconnected:', {
+          identity: participant.identity,
+          sid: participant.sid
+        });
         setState(prev => ({
           ...prev,
           participants: prev.participants.filter(p => p.sid !== participant.sid),
