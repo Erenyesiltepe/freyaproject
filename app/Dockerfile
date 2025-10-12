@@ -1,37 +1,78 @@
-# Simple single-stage Dockerfile for production
-FROM node:20-alpine
+# Multi-stage build for optimized production image
+FROM node:20-alpine AS base
 
-# Set environment variables
+# Install dependencies only when needed
+FROM base AS deps
+# Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+
+# Copy package files
+COPY package.json pnpm-lock.yaml ./
+# Enable pnpm
+RUN corepack enable pnpm
+
+# Install dependencies
+RUN pnpm install --frozen-lockfile
+
+# Rebuild the source code only when needed
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy Prisma schema first for client generation
+COPY prisma ./prisma
+COPY package.json ./
+
+# Generate Prisma client (Prisma is already in devDependencies)
+RUN npx prisma generate
+
+# Copy the rest of the application
+COPY . .
+
+# Set environment variables for build
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV DATABASE_URL=file:./prisma/dev.db
+ENV NEXT_PUBLIC_LIVEKIT_URL=wss://freyaproject-cg5up2cy.livekit.cloud
+
+# Build the application
+RUN npm run build
+
+# Production image, copy all the files and run next
+FROM base AS runner
+WORKDIR /app
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL=file:./prisma/dev.db
 
-# Set working directory
-WORKDIR /app
+# Create a non-root user
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
 
-# Enable pnpm via Corepack
-RUN corepack enable
+# Copy the built application
+COPY --from=builder /app/public ./public
 
-# Copy package files
-COPY package.json pnpm-lock.yaml ./
+# Set the correct permission for prerender cache
+RUN mkdir .next
+RUN chown nextjs:nodejs .next
 
-# Install all dependencies
-RUN pnpm install --frozen-lockfile
+# Copy the built Next.js application
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
 
-# Copy the entire project
-COPY . .
+# Copy Prisma files and setup database
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/package.json ./
 
-# Clean and recreate the database
-RUN rm -f prisma/dev.db && npx prisma db push
+# Copy node_modules with generated Prisma client
+COPY --from=builder /app/node_modules ./node_modules
 
-# Generate Prisma client
-RUN npx prisma generate
+USER nextjs
 
-# Build the application
-RUN pnpm build
-
-# Expose port
 EXPOSE 3000
 
-# Start the production server
-CMD ["pnpm", "start"]
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# Start the Next.js application
+CMD ["npm", "start"]

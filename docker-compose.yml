@@ -4,10 +4,11 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
+      target: runner
     ports:
       - "3000:3000"
     env_file:
-      - .env
+      - ./app/.env
     volumes:
       - ./app/prisma:/app/prisma
     healthcheck:
