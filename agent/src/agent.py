@@ -2,6 +2,7 @@ import logging
 import json
 from datetime import datetime, timedelta
 import statistics
+import uuid
 
 from dotenv import load_dotenv
 from livekit import rtc
@@ -294,11 +295,9 @@ async def entrypoint(ctx: JobContext):
         
         @ctx.room.local_participant.register_rpc_method("get_agent_metrics")
         async def get_agent_metrics(data: rtc.RpcInvocationData) -> str:
-            """Get current agent performance metrics using LiveKit's native metrics system"""
+            """Get current agent performance metrics using LiveKit's native metrics system, plus last 20 logs."""
             try:
                 logger.info("Agent metrics requested via RPC")
-                
-                # Return basic metrics structure - will be enhanced once session is available
                 metrics_data = {
                     'avg_first_token_latency_ms': 250.0,
                     'avg_tokens_per_second': 15.0,
@@ -307,10 +306,9 @@ async def entrypoint(ctx: JobContext):
                     'session_duration_minutes': 0,
                     'timestamp': __import__('datetime').datetime.now().isoformat(),
                     'room_id': ctx.room.name if ctx.room else 'unknown',
-                    'metrics_source': 'livekit_rpc_early_registration'
+                    'metrics_source': 'livekit_rpc_early_registration',
+                    'recentLogs': []
                 }
-                
-                # Try to get real metrics if session is available
                 if 'session' in locals() and hasattr(session, '_metrics_agent') and session._metrics_agent:
                     try:
                         real_metrics = session._metrics_agent.get_performance_metrics()
@@ -319,12 +317,26 @@ async def entrypoint(ctx: JobContext):
                             metrics_data['metrics_source'] = 'livekit_agent_metrics'
                     except Exception as e:
                         logger.warning(f"Could not get real metrics: {e}")
-                
-                logger.info(f"Returning metrics: latency={metrics_data.get('avg_first_token_latency_ms')}ms, tokens/s={metrics_data.get('avg_tokens_per_second')}")
+                # Add recent logs (last 20)
+                if hasattr(logger, 'memory_logs'):
+                    logs = logger.memory_logs[-20:]
+                    metrics_data['recentLogs'] = logs
                 return json.dumps(metrics_data)
-                
             except Exception as e:
                 logger.error(f"Error getting agent metrics: {e}")
+                return json.dumps({'error': str(e), 'status': 'error'})
+
+        @ctx.room.local_participant.register_rpc_method("get_agent_logs")
+        async def get_agent_logs(data: rtc.RpcInvocationData) -> str:
+            """Return the last 20 agent logs for UI display (as JSON array)"""
+            try:
+                if hasattr(logger, 'memory_logs'):
+                    logs = logger.memory_logs[-20:]
+                else:
+                    logs = []
+                return json.dumps(logs)
+            except Exception as e:
+                logger.error(f"Error getting agent logs: {e}")
                 return json.dumps({'error': str(e), 'status': 'error'})
 
         @ctx.room.local_participant.register_rpc_method("toggle_communication_mode")
@@ -458,3 +470,27 @@ async def entrypoint(ctx: JobContext):
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))
+
+
+class MemoryLogHandler(logging.Handler):
+    def __init__(self, capacity=100):
+        super().__init__()
+        self.capacity = capacity
+        self.logs = []
+
+    def emit(self, record):
+        log_entry = {
+            'id': str(uuid.uuid4()),
+            'timestamp': datetime.fromtimestamp(record.created).isoformat(),
+            'level': record.levelname.lower(),
+            'message': record.getMessage(),
+            'component': 'agent',
+        }
+        self.logs.append(log_entry)
+        if len(self.logs) > self.capacity:
+            self.logs = self.logs[-self.capacity:]
+
+if not hasattr(logger, 'memory_logs'):
+    memory_handler = MemoryLogHandler(capacity=100)
+    logger.addHandler(memory_handler)
+    logger.memory_logs = memory_handler.logs

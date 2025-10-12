@@ -1,3 +1,49 @@
+// Agent logs via LiveKit RPC
+import { Room } from 'livekit-client';
+import React from 'react';
+
+export function useAgentLogs(livekitRoom?: Room | null, isConnected?: boolean, refetchIntervalMs: number = 10000) {
+  const [logs, setLogs] = React.useState<any[] | null>(null);
+  const [loading, setLoading] = React.useState(false);
+  const [error, setError] = React.useState<Error | null>(null);
+
+  const fetchLogs = React.useCallback(async () => {
+    if (!livekitRoom || !isConnected) return;
+    setLoading(true);
+    try {
+      // Find agent participant
+      const agentParticipant = Array.from(livekitRoom.remoteParticipants.values())
+        .find(p => p.identity.includes('agent') || p.identity.includes('Assistant') || p.identity.includes('python'));
+      const destinationIdentity = agentParticipant ? agentParticipant.identity : '';
+      const result = await Promise.race([
+        livekitRoom.localParticipant.performRpc({
+          destinationIdentity,
+          method: 'get_agent_logs',
+          payload: 'request',
+        }),
+        new Promise<string>((_, reject) => setTimeout(() => reject(new Error('RPC timeout after 5 seconds')), 5000))
+      ]) as string;
+      if (result) {
+        setLogs(JSON.parse(result));
+      }
+      setError(null);
+    } catch (err: any) {
+      setError(err);
+      setLogs(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [livekitRoom, isConnected]);
+
+  React.useEffect(() => {
+    if (!isConnected || !livekitRoom) return;
+    fetchLogs();
+    const interval = setInterval(fetchLogs, refetchIntervalMs);
+    return () => clearInterval(interval);
+  }, [fetchLogs, isConnected, livekitRoom, refetchIntervalMs]);
+
+  return { logs, loading, error };
+}
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 // Types

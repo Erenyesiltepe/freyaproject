@@ -2,33 +2,8 @@
 
 import React, { useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { useMetrics } from '@/lib/queries';
+import { useMetrics, useAgentLogs } from '@/lib/queries';
 import { Room } from 'livekit-client';
-
-interface MetricsData {
-  avgFirstTokenLatency: number;
-  avgTokensPerSecond: number;
-  errorRate: number;
-  totalMessages: number;
-  totalErrors: number;
-  periodStart: string;
-  periodEnd: string;
-  recentLogs: LogEntry[];
-  rawMetricsCount?: {
-    firstTokenLatencies: number;
-    tokenRates: number;
-    errorRates: number;
-    totalMetrics: number;
-  };
-}
-
-interface LogEntry {
-  id: string;
-  timestamp: string;
-  level: 'info' | 'warn' | 'error' | 'debug';
-  message: string;
-  component: string;
-}
 
 interface MetricsProps {
   sessionId?: string;
@@ -37,14 +12,12 @@ interface MetricsProps {
   isConnected?: boolean;
 }
 
-export function Metrics({ sessionId, refreshInterval = 30000, livekitRoom, isConnected }: MetricsProps) { // Default 30 seconds
+export function Metrics({refreshInterval = 30000, livekitRoom, isConnected }: MetricsProps) { // Default 30 seconds
   const { 
     data: metricsResponse, 
     isLoading: loading, 
     error
   } = useMetrics(24, refreshInterval); // Pass custom refresh interval
-  
-  const metrics = metricsResponse?.metrics as MetricsData | undefined;
 
   // Real-time metrics state from agent
   const [realtimeMetrics, setRealtimeMetrics] = React.useState<{
@@ -54,8 +27,10 @@ export function Metrics({ sessionId, refreshInterval = 30000, livekitRoom, isCon
     timestamp: string;
     status: string;
   } | null>(null);
-
   const [lastUpdated, setLastUpdated] = React.useState<string | null>(null);
+
+  // Real-time logs from agent
+  const { logs: agentLogs, loading: logsLoading, error: logsError } = useAgentLogs(livekitRoom, isConnected, 10000);
 
   // Request agent metrics directly from LiveKit agent
   const requestAgentMetrics = useCallback(async () => {
@@ -246,46 +221,6 @@ export function Metrics({ sessionId, refreshInterval = 30000, livekitRoom, isCon
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {/* Connection status notice */}
-          {!isConnected || !livekitRoom ? (
-            <div className="mb-6 p-4 bg-yellow-900/20 border border-yellow-600/30 rounded-lg">
-              <div className="flex items-start gap-3">
-                <div className="text-yellow-400 text-xl">⚠️</div>
-                <div>
-                  <div className="text-yellow-300 font-medium mb-1">Agent Not Connected</div>
-                  <div className="text-yellow-200 text-sm">
-                    Join a chat room to connect to the LiveKit agent and see real-time metrics. 
-                    Make sure the agent is running with: <code className="text-yellow-100 bg-yellow-900/30 px-1 rounded">uv run python src/agent.py console</code>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : realtimeMetrics ? (
-            <div className="mb-6 p-4 bg-green-900/20 border border-green-600/30 rounded-lg">
-              <div className="flex items-start gap-3">
-                <div className="text-green-400 text-xl">✅</div>
-                <div>
-                  <div className="text-green-300 font-medium mb-1">Real-time Metrics Active</div>
-                  <div className="text-green-200 text-sm">
-                    Successfully connected to LiveKit agent. Metrics are being collected every 10 seconds.
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="mb-6 p-4 bg-blue-900/20 border border-blue-600/30 rounded-lg">
-              <div className="flex items-start gap-3">
-                <div className="text-blue-400 text-xl">🔄</div>
-                <div>
-                  <div className="text-blue-300 font-medium mb-1">Connecting to Agent</div>
-                  <div className="text-blue-200 text-sm">
-                    Connected to room, attempting to collect metrics from the agent...
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
           <div className="grid grid-cols-3 gap-6">
             <div className="text-center">
               <div className="text-2xl mb-2">{getMetricIcon('latency')}</div>
@@ -318,19 +253,6 @@ export function Metrics({ sessionId, refreshInterval = 30000, livekitRoom, isCon
               </div>
             </div>
           </div>
-
-          {/* Performance Indicators */}
-          <div className="mt-6 pt-4 border-t border-gray-700">
-            <div className="flex justify-between text-sm">
-              <div className="text-gray-400">
-                Period: {metrics?.periodStart ? new Date(metrics.periodStart).toLocaleString() : 'N/A'} - 
-                {metrics?.periodEnd ? new Date(metrics.periodEnd).toLocaleString() : 'N/A'}
-              </div>
-              <div className="text-gray-400">
-                Total Metrics: {metrics?.rawMetricsCount?.totalMetrics || 0}
-              </div>
-            </div>
-          </div>
         </CardContent>
       </Card>
 
@@ -346,8 +268,8 @@ export function Metrics({ sessionId, refreshInterval = 30000, livekitRoom, isCon
         </CardHeader>
         <CardContent>
           <div className="space-y-2 max-h-96 overflow-y-auto">
-            {metrics?.recentLogs && metrics.recentLogs.length > 0 ? (
-              metrics.recentLogs.map((log) => (
+            {agentLogs && agentLogs.length > 0 ? (
+              agentLogs.map((log: any) => (
                 <div 
                   key={log.id} 
                   className={`text-sm p-3 rounded border transition-colors ${
@@ -378,6 +300,10 @@ export function Metrics({ sessionId, refreshInterval = 30000, livekitRoom, isCon
                   </div>
                 </div>
               ))
+            ) : logsLoading ? (
+              <div className="text-gray-400 text-center py-8">Loading logs...</div>
+            ) : logsError ? (
+              <div className="text-red-400 text-center py-8">Error loading logs: {logsError.message}</div>
             ) : (
               <div className="text-gray-500 text-center py-8">
                 <div className="text-2xl mb-2">📋</div>

@@ -1,5 +1,19 @@
 import { NextRequest } from 'next/server';
 
+// Set environment variables before any imports
+Object.defineProperty(process.env, 'LIVEKIT_API_KEY', {
+  value: 'test-api-key',
+  writable: true,
+});
+Object.defineProperty(process.env, 'LIVEKIT_API_SECRET', {
+  value: 'test-api-secret',
+  writable: true,
+});
+Object.defineProperty(process.env, 'LIVEKIT_URL', {
+  value: 'wss://test.livekit.io',
+  writable: true,
+});
+
 // Mock dependencies before importing modules that use them
 jest.mock('@/lib/auth', () => ({
   getCurrentUser: jest.fn(),
@@ -48,6 +62,20 @@ const mockGetCurrentUser = getCurrentUser as jest.MockedFunction<typeof getCurre
 const mockPrisma = prisma as any;
 
 describe('/api/sessions', () => {
+  // Mock console methods to suppress noisy logs during tests
+  const originalConsoleLog = console.log;
+  const originalConsoleError = console.error;
+
+  beforeAll(() => {
+    console.log = jest.fn();
+    console.error = jest.fn();
+  });
+
+  afterAll(() => {
+    console.log = originalConsoleLog;
+    console.error = originalConsoleError;
+  });
+
   const mockUser = { 
     id: 'user-123', 
     email: 'test@example.com',
